@@ -54,7 +54,7 @@ Repository = "https://github.com/yourusername/portl"
 Issues = "https://github.com/yourusername/portl/issues"
 
 [project.scripts]
-portl = "portl.cli:cli"
+portl = "portl.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
