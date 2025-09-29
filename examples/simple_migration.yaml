@@ -1,0 +1,14 @@
+# Example migration job configuration
+source:
+  type: csv
+  path: ./data/users.csv
+destination:
+  type: postgres
+  host: localhost
+  database: mydb
+  table: users
+conflict: overwrite
+batch_size: 100
+hooks:
+  before_batch: ./scripts/notify_start.sh
+  after_batch: ./scripts/notify_done.sh

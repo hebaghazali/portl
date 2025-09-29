@@ -8,5 +8,5 @@ Portl turns migrations into a repeatable, reliable system — not a grind.
 """
 
 __version__ = "0.0.1"
-__author__ = "Your Name"
-__email__ = "your.email@example.com"
+__author__ = "Heba Ghazali"
+__email__ = "hebbaghazali@gmail.com"
