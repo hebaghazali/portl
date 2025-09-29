@@ -1,0 +1,45 @@
+# Portl Migration Job Configuration Template
+# Edit this file to match your migration requirements
+
+source:
+  type: csv  # Options: csv, postgres, mysql, google_sheets
+  path: ./data/source.csv  # For CSV files
+  # For databases, use: host, port, database, username, password, table/query
+  # For Google Sheets, use: spreadsheet_id, sheet_name, credentials_path
+
+destination:
+  type: postgres  # Options: postgres, mysql, csv, google_sheets
+  host: localhost
+  port: 5432
+  database: your_database
+  username: your_username
+  password: your_password  # Consider using environment variables
+  table: your_target_table
+
+# How to handle conflicts when records already exist
+conflict: overwrite  # Options: overwrite, skip, fail
+
+# Processing configuration
+batch_size: 1000
+parallel_jobs: 1
+
+# Optional: Schema mapping for column transformations
+# schema_mapping:
+#   source_column: destination_column
+#   user_id: id
+#   full_name: name
+
+# Optional: Data transformations
+# transformations:
+#   - column: email
+#     operation: lowercase
+#   - column: created_at
+#     operation: parse_date
+#     format: "%Y-%m-%d"
+
+# Optional: Hooks to run before/after processing
+# hooks:
+#   before_job: ./scripts/backup.sh
+#   after_job: ./scripts/notify.sh
+#   before_batch: ./scripts/log_batch.py
+#   after_batch: ./scripts/validate_batch.py

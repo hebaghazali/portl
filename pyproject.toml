@@ -61,3 +61,10 @@ where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.setuptools.package-data]
+portl = ["template.yaml"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["portl*"]
