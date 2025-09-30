@@ -1,6 +1,11 @@
 name: Publish to PyPI
 
 on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ main ]
   release:
     types: [published]
   workflow_dispatch:
@@ -10,7 +15,67 @@ permissions:
   contents: read
 
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Check if version has been updated
+        run: |
+          # Get the current version from pyproject.toml
+          CURRENT_VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d '"' -f 2)
+          echo "Current version in pyproject.toml: $CURRENT_VERSION"
+          
+          # Get the version from __init__.py
+          INIT_VERSION=$(grep -m 1 '__version__ = ' src/portl/__init__.py | cut -d '"' -f 2)
+          echo "Current version in __init__.py: $INIT_VERSION"
+          
+          # Check if versions match between files
+          if [ "$CURRENT_VERSION" != "$INIT_VERSION" ]; then
+            echo "Error: Version mismatch between pyproject.toml ($CURRENT_VERSION) and __init__.py ($INIT_VERSION)"
+            exit 1
+          fi
+          
+          # For pull requests, compare with main branch
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Get the version from the main branch pyproject.toml
+            git fetch origin main
+            MAIN_VERSION=$(git show origin/main:pyproject.toml | grep -m 1 'version = ' | cut -d '"' -f 2)
+            echo "Version in main branch: $MAIN_VERSION"
+            
+            # Check if version has been incremented
+            if [ "$CURRENT_VERSION" = "$MAIN_VERSION" ]; then
+              echo "Error: Version must be updated in pyproject.toml and __init__.py before merging to main"
+              exit 1
+            fi
+          else
+            # For direct pushes to main, compare with previous commit
+            PREVIOUS_COMMIT=$(git rev-parse HEAD^1)
+            if git show $PREVIOUS_COMMIT:pyproject.toml > /dev/null 2>&1; then
+              PREV_VERSION=$(git show $PREVIOUS_COMMIT:pyproject.toml | grep -m 1 'version = ' | cut -d '"' -f 2)
+              echo "Version in previous commit: $PREV_VERSION"
+              
+              # Check if version has been incremented
+              if [ "$CURRENT_VERSION" = "$PREV_VERSION" ]; then
+                echo "Error: Version must be updated in pyproject.toml and __init__.py before pushing to main"
+                exit 1
+              fi
+            fi
+          fi
+          
+          echo "Version check passed: $CURRENT_VERSION"
+          
   publish:
+    needs: check-version
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     
     steps:
