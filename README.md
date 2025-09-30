@@ -20,6 +20,48 @@ Instead of writing one-off SQL or Python scripts for every migration, Portl give
 
 ## Installation
 
+### Option 1: Docker (Recommended)
+
+**Quick Start:**
+```bash
+# Run directly with Docker
+docker run --rm ghcr.io/hebaghazali/portl:latest --help
+
+# Install wrapper for native-like experience
+# Linux/macOS/WSL:
+curl -fsSL https://raw.githubusercontent.com/hebaghazali/portl/main/scripts/install-portl.sh | bash
+
+# Windows PowerShell:
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/hebaghazali/portl/main/scripts/install-portl.ps1" | Invoke-Expression
+
+# Then run:
+portl --help
+```
+
+**Direct Docker Usage:**
+```bash
+# Basic usage
+docker run --rm ghcr.io/hebaghazali/portl:latest init
+
+# With volume mounting for file access
+docker run --rm -v "$PWD:/work" -w /work ghcr.io/hebaghazali/portl:latest run jobs/migration.yaml
+
+# With environment variables
+docker run --rm -e PORTL_API_KEY=your_key ghcr.io/hebaghazali/portl:latest run jobs/sheets_to_db.yaml
+
+# With custom config directory
+docker run --rm -v "$PWD:/work" -v "$HOME/.portl:/home/app/.portl" ghcr.io/hebaghazali/portl:latest init
+```
+
+**Wrapper Installation:**
+The wrapper script provides a native CLI experience while using Docker under the hood:
+- Mounts current directory as `/work`
+- Passes through `PORTL_*` environment variables
+- Handles TTY detection for interactive commands
+- Automatically pulls the latest image
+
+### Option 2: Python Package
+
 ```bash
 pip install portl
 ```
@@ -83,6 +125,83 @@ portl run jobs/users_to_pg.yaml --dry-run
 → Shows sample rows, schema mapping, and a row count check without writing data.
 
 ---
+
+## Docker Distribution
+
+Portl is distributed as a multi-architecture Docker image supporting both `linux/amd64` and `linux/arm64` platforms.
+
+### Image Tags
+
+- `ghcr.io/hebaghazali/portl:latest` - Latest stable release
+- `ghcr.io/hebaghazali/portl:v0.2.0` - Specific version (replace with actual version)
+- `ghcr.io/hebaghazali/portl:main` - Latest from main branch
+
+### Platform Support
+
+- ✅ **Linux AMD64** - Native support
+- ✅ **Linux ARM64** - Native support (Apple Silicon, ARM servers)
+- ✅ **macOS** - Via Docker Desktop (both Intel and Apple Silicon)
+- ✅ **Windows** - Via Docker Desktop (PowerShell, CMD, Git Bash, WSL2)
+
+### Advanced Usage
+
+**Environment File:**
+```bash
+# Create .env file with your configuration
+echo "PORTL_API_KEY=your_key" > .env
+echo "PORTL_DB_HOST=localhost" >> .env
+
+# Use with Docker
+docker run --rm --env-file .env -v "$PWD:/work" -w /work ghcr.io/hebaghazali/portl:latest run jobs/migration.yaml
+```
+
+**Network Access:**
+```bash
+# Access host services (useful for local databases)
+docker run --rm --add-host host.docker.internal:host-gateway -v "$PWD:/work" -w /work ghcr.io/hebaghazali/portl:latest run jobs/local_db.yaml
+```
+
+**Custom Image:**
+```bash
+# Linux/macOS/WSL:
+export PORTL_IMAGE=ghcr.io/hebaghazali/portl:v0.2.0
+curl -fsSL https://raw.githubusercontent.com/hebaghazali/portl/main/scripts/install-portl.sh | bash
+
+# Windows PowerShell:
+$env:PORTL_IMAGE="ghcr.io/hebaghazali/portl:v0.2.0"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/hebaghazali/portl/main/scripts/install-portl.ps1" | Invoke-Expression
+```
+
+**Windows-Specific Usage:**
+```powershell
+# PowerShell
+docker run --rm ghcr.io/hebaghazali/portl:latest --help
+
+# With volume mounting (PowerShell)
+docker run --rm -v "${PWD}:/work" -w /work ghcr.io/hebaghazali/portl:latest init
+
+# With volume mounting (CMD)
+docker run --rm -v "%CD%:/work" -w /work ghcr.io/hebaghazali/portl:latest init
+
+# With environment variables (PowerShell)
+docker run --rm -e PORTL_API_KEY=your_key ghcr.io/hebaghazali/portl:latest run jobs/migration.yaml
+```
+
+### Building from Source
+
+```bash
+# Build locally
+make build
+
+# Build multi-architecture
+make build-multi
+
+# Run tests
+make test
+
+# Create release
+make release TAG=v1.0.0
+```
 
 ## Documentation
 
