@@ -22,6 +22,11 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
@@ -84,7 +89,11 @@ jobs:
         docker run --rm ${{ env.REGISTRY_REPO }}:${{ steps.version.outputs.version }} --version
         
         echo "Testing arm64 image..."
-        docker run --rm --platform linux/arm64 ${{ env.REGISTRY_REPO }}:${{ steps.version.outputs.version }} --version
+        # Use --platform to explicitly specify the architecture
+        docker run --rm --platform linux/arm64 ${{ env.REGISTRY_REPO }}:${{ steps.version.outputs.version }} --version || {
+          echo "Error running arm64 image. This could be due to missing QEMU emulation."
+          exit 1
+        }
 
     - name: Generate SBOM
       uses: anchore/sbom-action@v0
