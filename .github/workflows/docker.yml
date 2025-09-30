@@ -50,17 +50,39 @@ jobs:
           type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
 
-    - name: Set version from tag
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Extract package version
       id: version
       run: |
+        # Get version from Python package
+        PACKAGE_VERSION=$(python -c "import sys; sys.path.append('./src'); from portl import __version__; print(__version__)")
+        echo "PACKAGE_VERSION: $PACKAGE_VERSION"
+        
+        # If this is a tag push, verify tag matches package version
         if [[ $GITHUB_REF == refs/tags/* ]]; then
-          VERSION=${GITHUB_REF#refs/tags/}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          GIT_TAG=${GITHUB_REF#refs/tags/}
+          # Remove 'v' prefix if present for comparison
+          CLEAN_TAG=${GIT_TAG#v}
+          
+          if [[ "$CLEAN_TAG" != "$PACKAGE_VERSION" ]]; then
+            echo "::warning::Git tag ($GIT_TAG) does not match package version ($PACKAGE_VERSION)"
+          fi
+          
+          # Use the tag as version (with v prefix)
+          VERSION=$GIT_TAG
         else
-          VERSION=${GITHUB_SHA::7}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          # Use package version with commit SHA for non-tag builds
+          SHORT_SHA=${GITHUB_SHA::7}
+          VERSION="v$PACKAGE_VERSION-$SHORT_SHA"
         fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
@@ -113,6 +135,7 @@ jobs:
         echo "## 🐳 Docker Image Built Successfully!" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Image:** \`${{ env.REGISTRY_REPO }}:${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "**Package Version:** \`${{ steps.version.outputs.package_version }}\`" >> $GITHUB_STEP_SUMMARY
         echo "**Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
         echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
         echo "- \`${{ env.REGISTRY_REPO }}:latest\`" >> $GITHUB_STEP_SUMMARY
