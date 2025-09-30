@@ -2,11 +2,11 @@
 # This script installs a lightweight wrapper that runs portl via Docker
 
 param(
-    [string]$Image = "ghcr.io/hebbaghazali/portl:latest"
+    [string]$Image = "ghcr.io/hebaghazali/portl:latest"
 )
 
 # Configuration
-$RegistryRepo = if ($env:PORTL_REGISTRY) { $env:PORTL_REGISTRY } else { "ghcr.io/hebbaghazali/portl" }
+$RegistryRepo = if ($env:PORTL_REGISTRY) { $env:PORTL_REGISTRY } else { "ghcr.io/hebaghazali/portl" }
 $DefaultImage = "$RegistryRepo:latest"
 $Image = if ($env:PORTL_IMAGE) { $env:PORTL_IMAGE } else { $Image }
 $InstallDir = "$env:USERPROFILE\.local\bin"
