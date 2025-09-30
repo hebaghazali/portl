@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for portl CLI
 # Stage 1: Builder
-FROM python:3.12-slim as builder
+FROM python:3.12-slim AS builder
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -11,6 +11,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libpq-dev \
+    default-libmysqlclient-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Create and use a virtual environment
@@ -32,7 +34,7 @@ COPY src/ ./src/
 RUN pip install .
 
 # Stage 2: Runtime
-FROM python:3.12-slim as runtime
+FROM python:3.12-slim AS runtime
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -42,7 +44,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
-    libmysqlclient21 \
+    libmariadb3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
