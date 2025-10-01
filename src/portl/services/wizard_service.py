@@ -5,7 +5,7 @@ This service provides a guided question-and-answer interface to help users
 configure their data migration jobs step by step.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import typer
 from rich.prompt import Confirm
 from rich.table import Table
@@ -14,39 +14,311 @@ from rich.console import Console
 from ..ui.console import ConsoleUI
 
 
+class NavigationException(Exception):
+    """Exception for handling navigation commands."""
+    def __init__(self, action: str):
+        self.action = action
+        super().__init__(f"Navigation: {action}")
+
+
 class WizardService:
-    """Interactive wizard for collecting migration configuration."""
+    """Interactive wizard for collecting migration configuration with navigation support."""
     
     def __init__(self):
         self.ui = ConsoleUI()
         self.console = Console()
+        self.config = {}
+        self.current_step = 0
+        self.steps = [
+            ("source", "📊 Source Configuration", self._configure_source_step),
+            ("destination", "🎯 Destination Configuration", self._configure_destination_step),
+            ("processing", "⚙️ Processing Options", self._configure_processing_step),
+            ("advanced", "🔧 Advanced Configuration", self._configure_advanced_step),
+            ("validation", "✅ Validation & Testing Options", self._configure_validation_step),
+        ]
     
     def run_wizard(self) -> Dict[str, Any]:
-        """Run the complete interactive wizard and return configuration."""
-        config = {}
+        """Run the complete interactive wizard with navigation support."""
+        self.ui.print_info("[bold cyan]🚀 Portl Migration Wizard[/bold cyan]")
+        self.ui.print_info("Navigate with: [green]Enter[/green] = Next, [yellow]b[/yellow] = Back, [red]q[/red] = Quit")
+        self.ui.print_info("=" * 60)
         
-        # Step 1: Source Configuration
-        self.ui.print_info("📊 [bold]Step 1: Source Configuration[/bold]")
-        config['source'] = self._configure_source()
+        while self.current_step < len(self.steps):
+            step_key, step_title, step_func = self.steps[self.current_step]
+            
+            # Show progress
+            self._show_progress()
+            
+            self.ui.print_info(f"\n[bold]{step_title}[/bold] (Step {self.current_step + 1}/{len(self.steps)})")
+            
+            # Show current configuration summary if we have any
+            if self.current_step > 0:
+                self._show_configuration_summary()
+            
+            # Navigation is now handled within individual prompts
+            
+            try:
+                result = step_func()
+                
+                if result == "back":
+                    self.current_step = max(0, self.current_step - 1)
+                    continue
+                elif result == "quit":
+                    raise KeyboardInterrupt()
+                elif result is not None:
+                    # Step completed successfully
+                    if step_key == "advanced" and not result.get("configure_advanced", False):
+                        # Skip advanced configuration
+                        pass
+                    else:
+                        self.config.update(result)
+                    self.current_step += 1
+                else:
+                    # Step was skipped or had no result
+                    self.current_step += 1
+                    
+            except KeyboardInterrupt:
+                self.ui.print_warning("\n\nWizard cancelled by user.")
+                raise typer.Exit(0)
         
-        # Step 2: Destination Configuration  
-        self.ui.print_info("\n🎯 [bold]Step 2: Destination Configuration[/bold]")
-        config['destination'] = self._configure_destination()
+        # Show final configuration and allow review
+        self._show_final_configuration()
         
-        # Step 3: Processing Options
-        self.ui.print_info("\n⚙️  [bold]Step 3: Processing Options[/bold]")
-        config.update(self._configure_processing())
+        return self.config
+    
+    def _configure_source_step(self) -> Optional[Dict[str, Any]]:
+        """Configure source connection with navigation support."""
+        # Show current configuration if returning to this step
+        if 'source' in self.config:
+            self.ui.print_info(f"[dim]Current: {self.config['source']['type']} source[/dim]")
         
-        # Step 4: Advanced Options (optional)
-        if self._ask_advanced_options():
-            self.ui.print_info("\n🔧 [bold]Step 4: Advanced Configuration[/bold]")
-            config.update(self._configure_advanced())
+        try:
+            source_config = self._configure_source()
+            return {'source': source_config}
+        except NavigationException as e:
+            return e.action
+    
+    def _configure_destination_step(self) -> Optional[Dict[str, Any]]:
+        """Configure destination connection with navigation support."""
+        # Show current configuration if returning to this step
+        if 'destination' in self.config:
+            self.ui.print_info(f"[dim]Current: {self.config['destination']['type']} destination[/dim]")
         
-        # Step 5: Validation & Dry Run Options
-        self.ui.print_info("\n✅ [bold]Step 5: Validation & Testing Options[/bold]")
-        config.update(self._configure_validation_options())
+        try:
+            destination_config = self._configure_destination()
+            return {'destination': destination_config}
+        except NavigationException as e:
+            return e.action
+    
+    def _configure_processing_step(self) -> Optional[Dict[str, Any]]:
+        """Configure processing options with navigation support."""
+        # Show current configuration if returning to this step
+        if 'conflict' in self.config:
+            self.ui.print_info(f"[dim]Current: {self.config['conflict']} conflict strategy, batch size {self.config.get('batch_size', 1000)}[/dim]")
         
-        return config
+        try:
+            return self._configure_processing()
+        except NavigationException as e:
+            return e.action
+    
+    def _configure_advanced_step(self) -> Optional[Dict[str, Any]]:
+        """Configure advanced options with navigation support."""
+        try:
+            if self._ask_advanced_options():
+                return self._configure_advanced()
+            else:
+                return {'configure_advanced': False}
+        except NavigationException as e:
+            return e.action
+    
+    def _configure_validation_step(self) -> Optional[Dict[str, Any]]:
+        """Configure validation options with navigation support."""
+        # Show current configuration if returning to this step
+        if 'dry_run_enabled' in self.config:
+            self.ui.print_info(f"[dim]Current: Dry run {'enabled' if self.config['dry_run_enabled'] else 'disabled'}[/dim]")
+        
+        try:
+            return self._configure_validation_options()
+        except NavigationException as e:
+            return e.action
+    
+    def _prompt_with_navigation(self, message: str, default: Any = None, type_func=None, hide_input: bool = False) -> Any:
+        """Wrapper for typer.prompt that handles navigation commands."""
+        while True:
+            try:
+                if hide_input:
+                    result = typer.prompt(message, default=default, type=type_func, hide_input=True)
+                else:
+                    result = typer.prompt(message, default=default, type=type_func)
+                
+                # Check for navigation commands on string inputs
+                if isinstance(result, str):
+                    if result.strip().lower() == 'b' and self.current_step > 0:
+                        raise NavigationException("back")
+                    elif result.strip().lower() == 'q':
+                        raise NavigationException("quit")
+                
+                return result
+            except typer.Abort:
+                raise NavigationException("quit")
+    
+    def _confirm_with_navigation(self, message: str, default: bool = False) -> bool:
+        """Wrapper for Confirm.ask that handles navigation commands and shows defaults."""
+        while True:
+            try:
+                # Show default value in the prompt
+                default_text = "Y/n" if default else "y/N"
+                prompt_text = f"{message} ({default_text})"
+                
+                response = typer.prompt(prompt_text, default="y" if default else "n", show_default=True)
+                
+                if response.strip().lower() == 'b' and self.current_step > 0:
+                    raise NavigationException("back")
+                elif response.strip().lower() == 'q':
+                    raise NavigationException("quit")
+                elif response.strip().lower() in ['y', 'yes', 'true', '1']:
+                    return True
+                elif response.strip().lower() in ['n', 'no', 'false', '0']:
+                    return False
+                elif response.strip() == '':
+                    # Empty response uses default
+                    return default
+                else:
+                    self.ui.print_warning("Please enter 'y' for yes, 'n' for no, 'b' to go back, or 'q' to quit")
+            except typer.Abort:
+                raise NavigationException("quit")
+    
+    def _show_progress(self) -> None:
+        """Show progress indicator."""
+        progress_bar = ""
+        for i in range(len(self.steps)):
+            if i < self.current_step:
+                progress_bar += "✅ "
+            elif i == self.current_step:
+                progress_bar += "🔄 "
+            else:
+                progress_bar += "⏳ "
+        
+        self.ui.print_info(f"Progress: {progress_bar}")
+    
+    def _show_configuration_summary(self) -> None:
+        """Show a summary of current configuration."""
+        if not self.config:
+            return
+        
+        self.ui.print_info("\n[bold]Current Configuration Summary:[/bold]")
+        self.ui.print_info("-" * 40)
+        
+        if 'source' in self.config:
+            source = self.config['source']
+            self.ui.print_info(f"📊 Source: {source['type']}")
+            if source['type'] in ['postgres', 'mysql']:
+                self.ui.print_info(f"   Database: {source.get('database', 'N/A')}")
+                self.ui.print_info(f"   Table: {source.get('table', source.get('query', 'N/A'))}")
+            elif source['type'] == 'csv':
+                self.ui.print_info(f"   File: {source.get('path', 'N/A')}")
+        
+        if 'destination' in self.config:
+            dest = self.config['destination']
+            self.ui.print_info(f"🎯 Destination: {dest['type']}")
+            if dest['type'] in ['postgres', 'mysql']:
+                self.ui.print_info(f"   Database: {dest.get('database', 'N/A')}")
+                self.ui.print_info(f"   Table: {dest.get('table', 'N/A')}")
+            elif dest['type'] == 'csv':
+                self.ui.print_info(f"   File: {dest.get('path', 'N/A')}")
+        
+        if 'conflict' in self.config:
+            self.ui.print_info(f"⚙️ Conflict Strategy: {self.config['conflict']}")
+        
+        if 'batch_size' in self.config:
+            self.ui.print_info(f"📦 Batch Size: {self.config['batch_size']}")
+        
+        if 'parallel_jobs' in self.config:
+            self.ui.print_info(f"🔄 Parallel Jobs: {self.config['parallel_jobs']}")
+        
+        if self.config.get('dry_run_enabled'):
+            self.ui.print_info("✅ Dry Run: Enabled")
+        
+        self.ui.print_info("-" * 40)
+    
+    def _show_final_configuration(self) -> None:
+        """Show final configuration and allow review/modification."""
+        self.ui.print_info("\n" + "=" * 60)
+        self.ui.print_info("[bold green]🎉 Configuration Complete![/bold green]")
+        self.ui.print_info("=" * 60)
+        
+        # Show full configuration summary
+        self._show_configuration_summary()
+        
+        # Allow user to review and modify
+        while True:
+            self.ui.print_info("\nOptions:")
+            self.ui.print_info("• [green]c[/green] = Continue with this configuration")
+            self.ui.print_info("• [yellow]r[/yellow] = Review/modify a specific step")
+            self.ui.print_info("• [red]q[/red] = Quit without saving")
+            
+            choice = typer.prompt(
+                "What would you like to do?",
+                default="c",
+                show_default=False
+            ).strip().lower()
+            
+            if choice == 'c' or choice == '':
+                break
+            elif choice == 'r':
+                self._review_configuration()
+            elif choice == 'q':
+                raise KeyboardInterrupt()
+            else:
+                self.ui.print_warning("Invalid choice. Please enter 'c', 'r', or 'q'.")
+    
+    def _review_configuration(self) -> None:
+        """Allow user to go back and modify specific steps."""
+        self.ui.print_info("\nWhich step would you like to review/modify?")
+        
+        step_options = []
+        for i, (step_key, step_title, _) in enumerate(self.steps):
+            step_options.append(f"{i + 1}. {step_title}")
+        
+        for option in step_options:
+            self.ui.print_info(f"  {option}")
+        
+        try:
+            step_choice = typer.prompt(
+                f"Enter step number (1-{len(self.steps)}) or 'c' to cancel",
+                default="c"
+            ).strip().lower()
+            
+            if step_choice == 'c':
+                return
+            
+            step_num = int(step_choice) - 1
+            if 0 <= step_num < len(self.steps):
+                # Go back to that step
+                old_step = self.current_step
+                self.current_step = step_num
+                
+                # Run the step
+                step_key, step_title, step_func = self.steps[step_num]
+                self.ui.print_info(f"\n[bold]Modifying: {step_title}[/bold]")
+                
+                try:
+                    result = step_func()
+                    if result and result not in ["back", "quit"]:
+                        if step_key == "advanced" and not result.get("configure_advanced", False):
+                            pass
+                        else:
+                            self.config.update(result)
+                        self.ui.print_success("Configuration updated!")
+                except KeyboardInterrupt:
+                    pass
+                
+                # Restore current step
+                self.current_step = old_step
+            else:
+                self.ui.print_warning("Invalid step number.")
+        except ValueError:
+            self.ui.print_warning("Invalid input. Please enter a number or 'c'.")
     
     def _configure_source(self) -> Dict[str, Any]:
         """Configure source connection."""
@@ -104,16 +376,15 @@ class WizardService:
             config.update(self._configure_merge_options())
         
         # Batch size
-        batch_size = typer.prompt(
+        batch_size = self._prompt_with_navigation(
             "Batch size (rows per batch)",
             default=1000,
-            type=int,
-            show_default=True
+            type_func=int
         )
         config['batch_size'] = batch_size
         
         # Parallel execution options
-        if Confirm.ask("Enable parallel processing?", default=False):
+        if self._confirm_with_navigation("Enable parallel processing?", default=False):
             parallel_jobs = typer.prompt(
                 "Number of parallel workers",
                 default=2,
@@ -173,7 +444,7 @@ class WizardService:
         )
         
         # Merge timestamp tracking
-        if Confirm.ask("Add timestamp tracking for merged records?", default=True):
+        if self._confirm_with_navigation("Add timestamp tracking for merged records?", default=True):
             config['merge_add_timestamp'] = True
             timestamp_column = typer.prompt(
                 "Timestamp column name", 
@@ -191,18 +462,18 @@ class WizardService:
         config.update(self._configure_schema_options())
         
         # Transformations
-        if Confirm.ask("Do you need data transformations?"):
+        if self._confirm_with_navigation("Do you need data transformations?"):
             config['transformations'] = self._configure_transformations()
         
         # Hooks
-        if Confirm.ask("Do you need to run scripts before/after processing?"):
+        if self._confirm_with_navigation("Do you need to run scripts before/after processing?"):
             config['hooks'] = self._configure_hooks()
         
         return config
     
     def _configure_csv_source(self) -> Dict[str, Any]:
         """Configure CSV source."""
-        path = typer.prompt("CSV file path", default="./data/source.csv")
+        path = self._prompt_with_navigation("CSV file path", default="./data/source.csv")
         return {"path": path}
     
     def _configure_database_source(self, db_type: str) -> Dict[str, Any]:
@@ -210,12 +481,12 @@ class WizardService:
         config = {}
         
         # Check if user wants to load from config file
-        if Confirm.ask("Load database connection from config file?", default=False):
+        if self._confirm_with_navigation("Load database connection from config file?", default=False):
             config_path = typer.prompt("Config file path", default=".portl.yaml")
             config['config_file'] = config_path
             
             # Still ask for table/query since it's specific to this migration
-            use_query = Confirm.ask("Use custom SQL query instead of table name?")
+            use_query = self._confirm_with_navigation("Use custom SQL query instead of table name?")
             if use_query:
                 config['query'] = typer.prompt("SQL query")
             else:
@@ -234,7 +505,7 @@ class WizardService:
             config['password'] = password
             
             # Table or query
-            use_query = Confirm.ask("Use custom SQL query instead of table name?")
+            use_query = self._confirm_with_navigation("Use custom SQL query instead of table name?")
             if use_query:
                 config['query'] = typer.prompt("SQL query")
             else:
@@ -265,7 +536,7 @@ class WizardService:
         config = {}
         
         # Check if user wants to load from config file
-        if Confirm.ask("Load database connection from config file?", default=False):
+        if self._confirm_with_navigation("Load database connection from config file?", default=False):
             config_path = typer.prompt("Config file path", default=".portl.yaml")
             config['config_file'] = config_path
             
@@ -325,7 +596,7 @@ class WizardService:
             config['schema_mapping'] = self._configure_schema_mapping()
         
         # Auto-create missing columns option
-        if Confirm.ask("Auto-create missing columns in destination?", default=True):
+        if self._confirm_with_navigation("Auto-create missing columns in destination?", default=True):
             config['auto_create_columns'] = True
         else:
             config['auto_create_columns'] = False
@@ -396,7 +667,7 @@ class WizardService:
         ]
         
         for hook_key, description in job_hook_types:
-            if Confirm.ask(f"Add {description.lower()} hook?"):
+            if self._confirm_with_navigation(f"Add {description.lower()} hook?"):
                 hook_config = self._configure_single_hook(description.lower())
                 hooks[hook_key] = hook_config
         
@@ -408,7 +679,7 @@ class WizardService:
         ]
         
         for hook_key, description in batch_hook_types:
-            if Confirm.ask(f"Add {description.lower()} hook?"):
+            if self._confirm_with_navigation(f"Add {description.lower()} hook?"):
                 hook_config = self._configure_single_hook(description.lower())
                 hooks[hook_key] = hook_config
         
@@ -420,7 +691,7 @@ class WizardService:
         ]
         
         for hook_key, description in row_hook_types:
-            if Confirm.ask(f"Add {description.lower()} hook?"):
+            if self._confirm_with_navigation(f"Add {description.lower()} hook?"):
                 hook_config = self._configure_single_hook(description.lower())
                 hooks[hook_key] = hook_config
         
@@ -444,7 +715,7 @@ class WizardService:
             hook_config["path"] = script_path
             
             # Script arguments
-            if Confirm.ask("Pass arguments to script?"):
+            if self._confirm_with_navigation("Pass arguments to script?"):
                 args = typer.prompt("Script arguments (space-separated)", default="")
                 hook_config["args"] = args.split() if args else []
         
@@ -456,11 +727,11 @@ class WizardService:
             hook_config["method"] = method
             
             if method in ["POST", "PUT", "PATCH"]:
-                if Confirm.ask("Include request body?"):
+                if self._confirm_with_navigation("Include request body?"):
                     body = typer.prompt("Request body (JSON)", default="{}")
                     hook_config["body"] = body
             
-            if Confirm.ask("Add custom headers?"):
+            if self._confirm_with_navigation("Add custom headers?"):
                 headers = {}
                 while True:
                     header_name = typer.prompt("Header name", default="", show_default=False)
@@ -501,7 +772,7 @@ class WizardService:
         config = {}
         
         # Dry run preview
-        if Confirm.ask("Enable dry run preview (test without writing data)?", default=True):
+        if self._confirm_with_navigation("Enable dry run preview (test without writing data)?", default=True):
             config['dry_run_enabled'] = True
             
             preview_rows = typer.prompt(
@@ -515,7 +786,7 @@ class WizardService:
             config['dry_run_enabled'] = False
         
         # Schema compatibility validation
-        if Confirm.ask("Enable schema compatibility validation?", default=True):
+        if self._confirm_with_navigation("Enable schema compatibility validation?", default=True):
             config['validate_schema'] = True
             
             # Schema validation options
@@ -533,7 +804,7 @@ class WizardService:
             config['validate_schema'] = False
         
         # Row count comparison
-        if Confirm.ask("Enable row count comparison after migration?", default=True):
+        if self._confirm_with_navigation("Enable row count comparison after migration?", default=True):
             config['validate_row_count'] = True
             
             # Row count tolerance
@@ -548,7 +819,7 @@ class WizardService:
             config['validate_row_count'] = False
         
         # Data sampling validation
-        if Confirm.ask("Enable data sampling validation?", default=False):
+        if self._confirm_with_navigation("Enable data sampling validation?", default=False):
             config['validate_data_sampling'] = True
             
             sample_size = typer.prompt(
@@ -561,13 +832,13 @@ class WizardService:
             
             # Data validation checks
             validation_checks = []
-            if Confirm.ask("Check for null values in required fields?"):
+            if self._confirm_with_navigation("Check for null values in required fields?"):
                 validation_checks.append("null_check")
-            if Confirm.ask("Check data type consistency?"):
+            if self._confirm_with_navigation("Check data type consistency?"):
                 validation_checks.append("type_check")
-            if Confirm.ask("Check for duplicate primary keys?"):
+            if self._confirm_with_navigation("Check for duplicate primary keys?"):
                 validation_checks.append("duplicate_check")
-            if Confirm.ask("Check value ranges/constraints?"):
+            if self._confirm_with_navigation("Check value ranges/constraints?"):
                 validation_checks.append("constraint_check")
             
             config['validation_checks'] = validation_checks
@@ -575,11 +846,11 @@ class WizardService:
             config['validate_data_sampling'] = False
         
         # Performance monitoring
-        if Confirm.ask("Enable performance monitoring?", default=True):
+        if self._confirm_with_navigation("Enable performance monitoring?", default=True):
             config['monitor_performance'] = True
             
             # Performance thresholds
-            if Confirm.ask("Set performance alert thresholds?"):
+            if self._confirm_with_navigation("Set performance alert thresholds?"):
                 max_duration = typer.prompt(
                     "Maximum job duration (minutes) before alert",
                     default=60,
@@ -601,7 +872,7 @@ class WizardService:
         return config
     
     def _select_from_list(self, prompt: str, options: List[str]) -> str:
-        """Present a numbered list for selection."""
+        """Present a numbered list for selection with navigation support."""
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column("Number", style="cyan")
         table.add_column("Option", style="white")
@@ -613,13 +884,23 @@ class WizardService:
         
         while True:
             try:
-                choice = typer.prompt(f"{prompt} (1-{len(options)})", type=int)
+                choice_str = typer.prompt(f"{prompt} (1-{len(options)})", default="", show_default=False)
+                
+                # Check for navigation commands
+                if choice_str.strip().lower() == 'b' and self.current_step > 0:
+                    raise NavigationException("back")
+                elif choice_str.strip().lower() == 'q':
+                    raise NavigationException("quit")
+                elif choice_str.strip() == '':
+                    continue  # Just re-prompt
+                
+                choice = int(choice_str)
                 if 1 <= choice <= len(options):
                     return options[choice - 1]
                 else:
                     self.ui.print_warning(f"Please enter a number between 1 and {len(options)}")
             except ValueError:
-                self.ui.print_warning("Please enter a valid number")
+                self.ui.print_warning("Please enter a valid number, 'b' to go back, or 'q' to quit")
     
     def _ask_advanced_options(self) -> bool:
         """Ask if user wants to configure advanced options."""
@@ -631,4 +912,4 @@ class WizardService:
         self.ui.print_info("• Processing hooks (job, batch, and row-level)")
         self.ui.print_info("• Hook types: scripts, API calls, lambda, notifications")
         
-        return Confirm.ask("Configure advanced options?", default=False)
+        return self._confirm_with_navigation("Configure advanced options?", default=False)
