@@ -63,10 +63,77 @@ class YamlGenerator:
         if 'batch_size' in config:
             yaml_config['batch_size'] = config['batch_size']
         
-        # Optional advanced configurations
+        # Processing configuration (continued)
+        if 'retry_strategy' in config:
+            yaml_config['retry_strategy'] = config['retry_strategy']
+        
+        if 'max_retries' in config:
+            yaml_config['max_retries'] = config['max_retries']
+        
+        if 'retry_delay' in config:
+            yaml_config['retry_delay'] = config['retry_delay']
+        
+        # Schema and mapping configuration
+        if 'mapping_strategy' in config:
+            yaml_config['mapping_strategy'] = config['mapping_strategy']
+        
         if 'schema_mapping' in config and config['schema_mapping']:
             yaml_config['schema_mapping'] = config['schema_mapping']
         
+        if 'auto_create_columns' in config:
+            yaml_config['auto_create_columns'] = config['auto_create_columns']
+        
+        if 'extra_columns_strategy' in config:
+            yaml_config['extra_columns_strategy'] = config['extra_columns_strategy']
+        
+        # Merge options
+        if 'merge_null_strategy' in config:
+            yaml_config['merge_null_strategy'] = config['merge_null_strategy']
+        
+        if 'merge_add_timestamp' in config:
+            yaml_config['merge_add_timestamp'] = config['merge_add_timestamp']
+        
+        if 'merge_timestamp_column' in config:
+            yaml_config['merge_timestamp_column'] = config['merge_timestamp_column']
+        
+        # Validation options
+        if 'dry_run_enabled' in config:
+            yaml_config['dry_run_enabled'] = config['dry_run_enabled']
+        
+        if 'dry_run_preview_rows' in config:
+            yaml_config['dry_run_preview_rows'] = config['dry_run_preview_rows']
+        
+        if 'validate_schema' in config:
+            yaml_config['validate_schema'] = config['validate_schema']
+        
+        if 'schema_validation_level' in config:
+            yaml_config['schema_validation_level'] = config['schema_validation_level']
+        
+        if 'validate_row_count' in config:
+            yaml_config['validate_row_count'] = config['validate_row_count']
+        
+        if 'row_count_tolerance' in config:
+            yaml_config['row_count_tolerance'] = config['row_count_tolerance']
+        
+        if 'validate_data_sampling' in config:
+            yaml_config['validate_data_sampling'] = config['validate_data_sampling']
+        
+        if 'data_sample_size' in config:
+            yaml_config['data_sample_size'] = config['data_sample_size']
+        
+        if 'validation_checks' in config and config['validation_checks']:
+            yaml_config['validation_checks'] = config['validation_checks']
+        
+        if 'monitor_performance' in config:
+            yaml_config['monitor_performance'] = config['monitor_performance']
+        
+        if 'max_job_duration' in config:
+            yaml_config['max_job_duration'] = config['max_job_duration']
+        
+        if 'min_throughput' in config:
+            yaml_config['min_throughput'] = config['min_throughput']
+        
+        # Advanced configurations
         if 'transformations' in config and config['transformations']:
             yaml_config['transformations'] = config['transformations']
         
@@ -130,8 +197,8 @@ class YamlGenerator:
         lines.append("# Processing Configuration")
         
         if 'conflict' in config:
-            lines.append("# How to handle conflicts when records already exist")
-            lines.append("# Options: overwrite, skip, fail, merge")
+            lines.append("# Primary key conflict resolution strategy")
+            lines.append("# Options: skip, overwrite, merge, fail")
             lines.append(f"conflict: {config['conflict']}")
             lines.append("")
         
@@ -145,12 +212,127 @@ class YamlGenerator:
             lines.append(f"parallel_jobs: {config['parallel_jobs']}")
             lines.append("")
         
-        # Optional sections
+        if 'retry_strategy' in config:
+            lines.append("# Retry strategy on failure")
+            lines.append("# Options: skip, retry_n_times, fail_fast")
+            lines.append(f"retry_strategy: {config['retry_strategy']}")
+            lines.append("")
+        
+        if 'max_retries' in config:
+            lines.append("# Maximum retry attempts")
+            lines.append(f"max_retries: {config['max_retries']}")
+            lines.append("")
+        
+        if 'retry_delay' in config:
+            lines.append("# Delay between retries (seconds)")
+            lines.append(f"retry_delay: {config['retry_delay']}")
+            lines.append("")
+        
+        # Schema and mapping configuration
+        if 'mapping_strategy' in config:
+            lines.append("# Schema Mapping Strategy")
+            lines.append("# Options: auto_map_by_name, manual_mapping, no_mapping")
+            lines.append(f"mapping_strategy: {config['mapping_strategy']}")
+            lines.append("")
+        
         if 'schema_mapping' in config:
             lines.append("# Column Mapping: source_column -> destination_column")
             lines.extend(self._yaml_section_to_lines('schema_mapping', config['schema_mapping']))
             lines.append("")
         
+        if 'auto_create_columns' in config:
+            lines.append("# Auto-create missing columns in destination")
+            lines.append(f"auto_create_columns: {str(config['auto_create_columns']).lower()}")
+            lines.append("")
+        
+        if 'extra_columns_strategy' in config:
+            lines.append("# How to handle extra destination columns")
+            lines.append("# Options: ignore, error, warn")
+            lines.append(f"extra_columns_strategy: {config['extra_columns_strategy']}")
+            lines.append("")
+        
+        # Merge configuration
+        if 'merge_null_strategy' in config:
+            lines.append("# Merge Strategy for Null Values")
+            lines.append("# Options: keep_existing, overwrite_with_null, skip_null")
+            lines.append(f"merge_null_strategy: {config['merge_null_strategy']}")
+            lines.append("")
+        
+        if 'merge_add_timestamp' in config:
+            lines.append("# Add timestamp tracking for merged records")
+            lines.append(f"merge_add_timestamp: {str(config['merge_add_timestamp']).lower()}")
+            lines.append("")
+        
+        if 'merge_timestamp_column' in config:
+            lines.append("# Timestamp column name for merge tracking")
+            lines.append(f"merge_timestamp_column: {config['merge_timestamp_column']}")
+            lines.append("")
+        
+        # Validation configuration
+        if any(key.startswith('dry_run') or key.startswith('validate') or key.startswith('monitor') for key in config.keys()):
+            lines.append("# Validation and Testing Configuration")
+            
+            if 'dry_run_enabled' in config:
+                lines.append("# Enable dry run preview (test without writing data)")
+                lines.append(f"dry_run_enabled: {str(config['dry_run_enabled']).lower()}")
+                lines.append("")
+            
+            if 'dry_run_preview_rows' in config:
+                lines.append("# Number of rows to preview in dry run")
+                lines.append(f"dry_run_preview_rows: {config['dry_run_preview_rows']}")
+                lines.append("")
+            
+            if 'validate_schema' in config:
+                lines.append("# Enable schema compatibility validation")
+                lines.append(f"validate_schema: {str(config['validate_schema']).lower()}")
+                lines.append("")
+            
+            if 'schema_validation_level' in config:
+                lines.append("# Schema validation level: strict, warn, ignore")
+                lines.append(f"schema_validation_level: {config['schema_validation_level']}")
+                lines.append("")
+            
+            if 'validate_row_count' in config:
+                lines.append("# Enable row count comparison after migration")
+                lines.append(f"validate_row_count: {str(config['validate_row_count']).lower()}")
+                lines.append("")
+            
+            if 'row_count_tolerance' in config:
+                lines.append("# Row count difference tolerance (%)")
+                lines.append(f"row_count_tolerance: {config['row_count_tolerance']}")
+                lines.append("")
+            
+            if 'validate_data_sampling' in config:
+                lines.append("# Enable data sampling validation")
+                lines.append(f"validate_data_sampling: {str(config['validate_data_sampling']).lower()}")
+                lines.append("")
+            
+            if 'data_sample_size' in config:
+                lines.append("# Sample size for data validation")
+                lines.append(f"data_sample_size: {config['data_sample_size']}")
+                lines.append("")
+            
+            if 'validation_checks' in config:
+                lines.append("# Data validation checks to perform")
+                lines.extend(self._yaml_section_to_lines('validation_checks', config['validation_checks']))
+                lines.append("")
+            
+            if 'monitor_performance' in config:
+                lines.append("# Enable performance monitoring")
+                lines.append(f"monitor_performance: {str(config['monitor_performance']).lower()}")
+                lines.append("")
+            
+            if 'max_job_duration' in config:
+                lines.append("# Maximum job duration (minutes) before alert")
+                lines.append(f"max_job_duration: {config['max_job_duration']}")
+                lines.append("")
+            
+            if 'min_throughput' in config:
+                lines.append("# Minimum throughput (rows/second) before alert")
+                lines.append(f"min_throughput: {config['min_throughput']}")
+                lines.append("")
+        
+        # Advanced configurations
         if 'transformations' in config:
             lines.append("# Data Transformations")
             lines.extend(self._yaml_section_to_lines('transformations', config['transformations']))
