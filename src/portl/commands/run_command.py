@@ -47,8 +47,16 @@ class RunCommandHandler:
         self.ui.print_job_options(config)
         
         try:
-            self.job_runner.execute_job(config)
-            self.ui.print_coming_soon("Migration execution engine")
+            result = self.job_runner.execute_job(config)
+            
+            if result['success']:
+                self._print_execution_results(result, dry_run)
+            else:
+                self.ui.print_error("Job execution failed:")
+                for error in result.get('errors', []):
+                    self.ui.print_error(f"  - {error}")
+                raise typer.Exit(1)
+                
         except Exception as e:
             self.ui.print_error(f"Job execution failed: {e}")
             raise typer.Exit(1)
@@ -99,3 +107,37 @@ class RunCommandHandler:
         else:
             self.ui.print_template_usage_instructions(template_path)
             raise typer.Exit(0)
+    
+    def _print_execution_results(self, result: dict, dry_run: bool):
+        """Print job execution results."""
+        if dry_run:
+            self.ui.print_success("✅ Dry run completed successfully!")
+            
+            # Print schema validation results
+            if result.get('schema_validation'):
+                self.ui.print_warning("Schema compatibility warnings:")
+                for warning in result['schema_validation']:
+                    self.ui.print_warning(f"  - {warning}")
+            else:
+                self.ui.print_success("✅ Schema compatibility check passed")
+            
+            # Print preview data if available
+            if result.get('preview_data'):
+                self.ui.print_info("Preview of source data:")
+                for i, row in enumerate(result['preview_data'][:3], 1):
+                    self.ui.print_info(f"  Row {i}: {dict(list(row.items())[:3])}...")
+            
+            self.ui.print_info(f"Total rows that would be processed: {result.get('rows_processed', 0)}")
+            
+        else:
+            self.ui.print_success("✅ Migration completed successfully!")
+            self.ui.print_info(f"Rows processed: {result.get('rows_processed', 0)}")
+            self.ui.print_info(f"Rows written: {result.get('rows_written', 0)}")
+            self.ui.print_info(f"Batches processed: {result.get('batches_processed', 0)}")
+            self.ui.print_info(f"Duration: {result.get('duration_seconds', 0):.2f} seconds")
+        
+        # Print warnings if any
+        if result.get('warnings'):
+            self.ui.print_warning("Warnings:")
+            for warning in result['warnings']:
+                self.ui.print_warning(f"  - {warning}")

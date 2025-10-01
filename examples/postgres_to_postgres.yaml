@@ -1,0 +1,53 @@
+# Example: PostgreSQL to PostgreSQL Migration
+# This example shows how to migrate data between two PostgreSQL databases
+
+source:
+  type: postgres
+  host: source-db.example.com
+  port: 5432
+  database: production_db
+  username: readonly_user
+  password: ${PORTL_SOURCE_PASSWORD}  # Use environment variable
+  schema: public
+  table: users
+  # Alternative: use a custom query instead of table
+  # query: "SELECT id, email, name, created_at FROM users WHERE active = true"
+
+destination:
+  type: postgres
+  host: dest-db.example.com
+  port: 5432
+  database: analytics_db
+  username: writer_user
+  password: ${PORTL_DEST_PASSWORD}  # Use environment variable
+  schema: public
+  table: user_profiles
+
+# How to handle conflicts (duplicate keys)
+conflict: overwrite  # Options: overwrite, skip, fail, merge
+
+# Processing configuration
+batch_size: 1000     # Process 1000 rows at a time
+parallel_jobs: 1     # Number of parallel processing jobs
+
+# Optional: Map column names between source and destination
+schema_mapping:
+  id: user_id
+  email: email_address
+  name: full_name
+  created_at: registration_date
+
+# Optional: Data transformations (not yet implemented)
+# transformations:
+#   - column: email_address
+#     operation: lowercase
+#   - column: registration_date
+#     operation: parse_date
+#     parameters:
+#       format: "%Y-%m-%d %H:%M:%S"
+
+# Optional: Processing hooks (not yet implemented)
+# hooks:
+#   before_job: ./scripts/backup_destination.sh
+#   after_job: ./scripts/send_notification.py
+#   before_batch: ./scripts/log_batch_start.py

@@ -1,0 +1,26 @@
+# Simple PostgreSQL Migration Example
+# Minimal configuration for testing
+
+source:
+  type: postgres
+  host: localhost
+  port: 5432
+  database: testdb
+  username: postgres
+  password: testpass
+  schema: public
+  table: source_table
+
+destination:
+  type: postgres
+  host: localhost
+  port: 5432
+  database: testdb
+  username: postgres
+  password: testpass
+  schema: public
+  table: destination_table
+
+# Use default settings for everything else
+conflict: overwrite
+batch_size: 100
