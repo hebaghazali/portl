@@ -9,7 +9,7 @@
   - Create basic project structure (src/, tests/, docs/, examples/)
   - Add .gitignore and basic README
 
-- [ ] **CLI Framework**
+- [x] **CLI Framework**
   - Implement CLI framework using Click or Typer
   - Create command structure: `portl init`, `portl run`, `--dry-run` flag
   - Add help text and command descriptions
