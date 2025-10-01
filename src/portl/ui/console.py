@@ -1,5 +1,6 @@
 from rich.console import Console
 from rich.panel import Panel
+from rich.prompt import Confirm
 from pathlib import Path
 
 from ..services.job_runner import JobRunnerConfig
@@ -80,6 +81,19 @@ class ConsoleUI:
     
     def print_coming_soon(self, feature: str):
         self.console.print(f"\n[yellow]{feature} coming soon![/yellow]")
+    
+    def confirm(self, message: str, default: bool = True) -> bool:
+        """
+        Ask user for confirmation.
+        
+        Args:
+            message: Question to ask
+            default: Default value if user just presses Enter
+            
+        Returns:
+            bool: User's choice
+        """
+        return Confirm.ask(message, default=default)
     
     def print_not_implemented(self, feature: str):
         self.console.print(f"\n[yellow]{feature} not yet implemented[/yellow]")

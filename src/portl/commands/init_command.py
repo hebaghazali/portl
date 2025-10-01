@@ -36,18 +36,37 @@ class InitCommandHandler:
             # Collect configuration through wizard
             config = self.wizard.run_wizard()
             
-            # Generate YAML from configuration
-            yaml_content = self.yaml_generator.generate_yaml(config)
+            # Show job plan preview and generate YAML with syntax highlighting
+            self.ui.print_info("\n" + "="*60)
+            yaml_content = self.yaml_generator.generate_and_preview_yaml(config, show_preview=True)
             
-            # Determine output file
-            if output is None:
-                output = self._get_output_file()
+            # Validate the generated YAML and show results
+            self.ui.print_info("\n" + "="*60)
+            validation_passed = self.yaml_generator.validate_and_report_yaml(yaml_content)
             
-            # Save YAML file
-            self._save_yaml_file(output, yaml_content)
+            if not validation_passed:
+                self.ui.print_error("Generated YAML has validation errors. Please check the configuration.")
+                return
             
-            # Show summary and next steps
-            self._show_completion_summary(output, config)
+            # Ask for confirmation before saving
+            self.ui.print_info("\n" + "="*60)
+            save_confirmed = self.ui.confirm("Save this configuration to a YAML file?")
+            
+            if save_confirmed:
+                # Determine output file
+                if output is None:
+                    output = self._get_output_file()
+                
+                # Save YAML file with mode handling
+                saved = self.yaml_generator.save_yaml_with_mode_handling(yaml_content, output)
+                
+                if saved:
+                    # Show summary and next steps
+                    self._show_completion_summary(output, config)
+                else:
+                    self.ui.print_warning("Configuration not saved.")
+            else:
+                self.ui.print_info("Configuration not saved. You can run the wizard again anytime.")
             
         except KeyboardInterrupt:
             self.ui.print_warning("\n\nWizard cancelled by user.")
@@ -90,11 +109,12 @@ class InitCommandHandler:
             if output is None:
                 output = Path("portl_job.yaml")
             
-            # Save YAML file
-            self._save_yaml_file(output, yaml_content)
+            # Save YAML file with mode handling
+            saved = self.yaml_generator.save_yaml_with_mode_handling(yaml_content, output, overwrite=True)
             
-            # Show completion summary
-            self._show_completion_summary(output, config)
+            # Show completion summary if saved successfully
+            if saved:
+                self._show_completion_summary(output, config)
             
         except Exception as e:
             self.ui.print_error(f"Non-interactive mode failed: {e}")
@@ -166,15 +186,6 @@ class InitCommandHandler:
         
         return output_path
     
-    def _save_yaml_file(self, output_path: Path, yaml_content: str):
-        """Save YAML content to file."""
-        try:
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(yaml_content)
-            self.ui.print_success(f"Configuration saved to: [cyan]{output_path}[/cyan]")
-        except Exception as e:
-            self.ui.print_error(f"Failed to save file: {e}")
-            raise
     
     def _show_completion_summary(self, output_path: Path, config: Dict[str, Any]):
         """Show completion summary and next steps."""

@@ -8,11 +8,19 @@ into properly formatted YAML migration job files.
 from typing import Dict, Any, List
 import yaml
 from datetime import datetime
-from ..schema import JobConfig, SchemaValidator
+from pathlib import Path
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+
+from ..schema import SchemaValidator
 
 
 class YamlGenerator:
     """Generates YAML configuration files from wizard responses."""
+    
+    def __init__(self):
+        self.console = Console()
     
     def generate_yaml(self, config: Dict[str, Any]) -> str:
         """
@@ -225,3 +233,209 @@ class YamlGenerator:
                 "errors": [f"Validation error: {e}"],
                 "warnings": []
             }
+    
+    def generate_job_plan_preview(self, config: Dict[str, Any]) -> str:
+        """
+        Generate a human-readable job plan preview.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            str: Formatted job plan description
+        """
+        lines = []
+        lines.append("Migration Job Plan")
+        lines.append("=" * 50)
+        
+        # Source information
+        if 'source' in config:
+            source = config['source']
+            lines.append(f"\nSource: {source.get('type', 'Unknown').upper()}")
+            if source.get('type') == 'csv':
+                lines.append(f"   File: {source.get('path', 'N/A')}")
+            elif source.get('type') in ['postgres', 'mysql']:
+                lines.append(f"   Host: {source.get('host', 'N/A')}")
+                lines.append(f"   Database: {source.get('database', 'N/A')}")
+                lines.append(f"   Table/Query: {source.get('table') or source.get('query', 'N/A')}")
+            elif source.get('type') == 'google_sheets':
+                lines.append(f"   Spreadsheet ID: {source.get('spreadsheet_id', 'N/A')}")
+                lines.append(f"   Sheet: {source.get('sheet_name', 'N/A')}")
+        
+        # Destination information
+        if 'destination' in config:
+            dest = config['destination']
+            lines.append(f"\nDestination: {dest.get('type', 'Unknown').upper()}")
+            if dest.get('type') == 'csv':
+                lines.append(f"   File: {dest.get('path', 'N/A')}")
+            elif dest.get('type') in ['postgres', 'mysql']:
+                lines.append(f"   Host: {dest.get('host', 'N/A')}")
+                lines.append(f"   Database: {dest.get('database', 'N/A')}")
+                lines.append(f"   Table: {dest.get('table', 'N/A')}")
+            elif dest.get('type') == 'google_sheets':
+                lines.append(f"   Spreadsheet ID: {dest.get('spreadsheet_id', 'N/A')}")
+                lines.append(f"   Sheet: {dest.get('sheet_name', 'N/A')}")
+        
+        # Processing configuration
+        lines.append(f"\nProcessing Configuration:")
+        lines.append(f"   Conflict Strategy: {config.get('conflict', 'overwrite')}")
+        lines.append(f"   Batch Size: {config.get('batch_size', 1000)} rows")
+        lines.append(f"   Parallel Jobs: {config.get('parallel_jobs', 1)}")
+        
+        # Optional configurations
+        if config.get('schema_mapping'):
+            lines.append(f"\nColumn Mapping:")
+            for source_col, dest_col in config['schema_mapping'].items():
+                lines.append(f"   {source_col} -> {dest_col}")
+        
+        if config.get('transformations'):
+            lines.append(f"\nData Transformations:")
+            for transform in config['transformations']:
+                lines.append(f"   {transform.get('column', 'N/A')}: {transform.get('operation', 'N/A')}")
+        
+        if config.get('hooks'):
+            lines.append(f"\nProcessing Hooks:")
+            hooks = config['hooks']
+            for hook_type, hook_value in hooks.items():
+                if hook_value:
+                    lines.append(f"   {hook_type}: {hook_value}")
+        
+        return '\n'.join(lines)
+    
+    def display_job_plan_preview(self, config: Dict[str, Any]) -> None:
+        """
+        Display a formatted job plan preview.
+        
+        Args:
+            config: Configuration dictionary
+        """
+        plan = self.generate_job_plan_preview(config)
+        panel = Panel(plan, title="[bold green]Job Plan Preview[/bold green]", border_style="green")
+        self.console.print(panel)
+    
+    def save_yaml_with_mode_handling(self, 
+                                   yaml_content: str, 
+                                   output_path: Path, 
+                                   overwrite: bool = False) -> bool:
+        """
+        Save YAML content with proper mode handling (overwrite vs append).
+        
+        Args:
+            yaml_content: YAML content to save
+            output_path: Path where to save the file
+            overwrite: Whether to overwrite existing file without asking
+            
+        Returns:
+            bool: True if file was saved successfully
+        """
+        if output_path.exists() and not overwrite:
+            # File exists, ask user what to do
+            self.console.print(f"\n[yellow]File already exists: {output_path}[/yellow]")
+            
+            table = Table(show_header=False, box=None)
+            table.add_row("[1]", "Overwrite existing file")
+            table.add_row("[2]", "Create backup and overwrite")
+            table.add_row("[3]", "Choose different filename")
+            table.add_row("[4]", "Cancel")
+            
+            self.console.print(table)
+            
+            while True:
+                choice = self.console.input("\nChoose an option [1-4]: ").strip()
+                
+                if choice == "1":
+                    # Overwrite
+                    break
+                elif choice == "2":
+                    # Create backup
+                    backup_path = output_path.with_suffix(f"{output_path.suffix}.backup")
+                    output_path.rename(backup_path)
+                    self.console.print(f"[green]Backup created: {backup_path}[/green]")
+                    break
+                elif choice == "3":
+                    # Choose different filename
+                    new_name = self.console.input("Enter new filename: ").strip()
+                    if new_name:
+                        output_path = output_path.parent / new_name
+                        if not output_path.suffix:
+                            output_path = output_path.with_suffix('.yaml')
+                    break
+                elif choice == "4":
+                    # Cancel
+                    self.console.print("[yellow]Save cancelled.[/yellow]")
+                    return False
+                else:
+                    self.console.print("[red]Invalid choice. Please enter 1-4.[/red]")
+        
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(yaml_content)
+            
+            self.console.print(f"[green]✅ YAML configuration saved: {output_path}[/green]")
+            return True
+            
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to save file: {e}[/red]")
+            return False
+    
+    def generate_and_preview_yaml(self, config: Dict[str, Any], show_preview: bool = True) -> str:
+        """
+        Generate YAML and optionally show preview with syntax highlighting.
+        
+        Args:
+            config: Configuration dictionary
+            show_preview: Whether to display the preview
+            
+        Returns:
+            str: Generated YAML content
+        """
+        # Generate YAML content
+        yaml_content = self.generate_yaml(config)
+        
+        if show_preview:
+            # Show job plan preview
+            self.display_job_plan_preview(config)
+            self.console.print()  # Add spacing
+        
+        return yaml_content
+    
+    def display_validation_results(self, validation_result: Dict[str, Any]) -> None:
+        """
+        Display YAML validation results with formatted error reporting.
+        
+        Args:
+            validation_result: Result from validate_generated_yaml()
+        """
+        if validation_result['valid']:
+            self.console.print("[green]YAML validation passed![/green]")
+            
+            if validation_result.get('warnings'):
+                self.console.print("\n[yellow]Warnings:[/yellow]")
+                for warning in validation_result['warnings']:
+                    self.console.print(f"  - {warning}")
+        else:
+            self.console.print("[red]YAML validation failed![/red]")
+            
+            if validation_result.get('errors'):
+                self.console.print("\n[red]Errors:[/red]")
+                for error in validation_result['errors']:
+                    self.console.print(f"  - {error}")
+            
+            if validation_result.get('warnings'):
+                self.console.print("\n[yellow]Warnings:[/yellow]")
+                for warning in validation_result['warnings']:
+                    self.console.print(f"  - {warning}")
+    
+    def validate_and_report_yaml(self, yaml_content: str) -> bool:
+        """
+        Validate YAML content and display formatted results.
+        
+        Args:
+            yaml_content: YAML content to validate
+            
+        Returns:
+            bool: True if validation passed
+        """
+        validation_result = self.validate_generated_yaml(yaml_content)
+        self.display_validation_results(validation_result)
+        return validation_result['valid']

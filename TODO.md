@@ -26,11 +26,11 @@
   - Create configuration classes for source, destination, hooks, etc.
   - Add schema validation for required fields
   - **YAML Generation & Preview:**
-    - Generate YAML from wizard responses
-    - Show job plan preview before execution
-    - Support YAML file overwrite vs append modes
-    - Display formatted YAML output with syntax highlighting
-    - Add YAML validation and error reporting
+    - [x] Generate YAML from wizard responses
+    - [x] Show job plan preview before execution
+    - [x] Support YAML file overwrite vs append modes
+    - [x] Display formatted YAML output with syntax highlighting
+    - [x] Add YAML validation and error reporting
 
 ## Core Features Phase
 
