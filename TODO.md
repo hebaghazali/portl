@@ -43,6 +43,11 @@
     - Google Sheet ID and tab name for sheet sources
     - Destination type and connection details
     - Destination table name specification
+  - **Operation Type Questions:**
+    - Operation type selection (insert/update/delete/mixed)
+    - For updates: specify key columns for matching records
+    - For deletes: specify key columns for identifying records to delete
+    - For mixed operations: define operation rules per record
   - **Schema & Mapping Questions:**
     - Auto-map columns by name vs manual mapping configuration
     - Column-by-column mapping interface
@@ -50,6 +55,8 @@
     - Handle extra destination columns (ignore/error)
   - **Conflict & Transformations Questions:**
     - Primary key conflict strategy (skip/overwrite/merge/fail)
+    - Update conflict strategy (record not found, constraint violations)
+    - Delete conflict strategy (record not found, foreign key constraints)
     - Column transformation configuration (date string → datetime, price string → Decimal)
   - **Hooks Configuration Questions:**
     - Row-level hooks (before/after each row): script/lambda/API call/none
@@ -78,12 +85,13 @@
   - Implement data reading with pagination support
 
 - [ ] **Destination Connectors**
-  - Implement Postgres writer with batch inserts
-  - Implement MySQL writer with batch inserts
-  - Implement CSV writer with chunking
-  - Implement Google Sheets writer with batch updates
+  - Implement Postgres writer with batch operations (insert/update/delete)
+  - Implement MySQL writer with batch operations (insert/update/delete)
+  - Implement CSV writer with chunking and operation support
+  - Implement Google Sheets writer with batch operations (insert/update/delete)
   - Add connection management and error handling
   - Implement data writing with transaction support
+  - Add operation type selection (insert/update/delete) in YAML configuration
 
 - [ ] **Field Mapping System**
   - Build field mapping engine to transform data between schemas
@@ -98,13 +106,16 @@
   - Implement overwrite strategy (replace existing)
   - Implement merge strategy (combine data)
   - Implement fail strategy (stop on conflict)
-  - Add conflict detection logic
+  - Add conflict detection logic for insert/update/delete operations
+  - Handle update conflicts (record not found, constraint violations)
+  - Handle delete conflicts (record not found, foreign key constraints)
 
 - [ ] **Batch Processing**
-  - Implement configurable batch sizes
+  - Implement configurable batch sizes for insert/update/delete operations
   - Add progress tracking and reporting
   - Implement memory-efficient streaming for large datasets
   - Add batch-level error handling and recovery
+  - Support mixed operation batches (inserts + updates + deletes)
 
 - [ ] **Hooks System**
   - Implement before/after row hooks
@@ -119,6 +130,8 @@
   - Show sample rows and mapping results
   - Display row count estimates without writing data
   - Add validation warnings and errors
+  - Preview operation types (insert/update/delete) for each record
+  - Validate key columns for update/delete operations
 
 ## Production Readiness Phase
 
@@ -134,6 +147,8 @@
   - Test error scenarios and edge cases
   - Add performance tests for large datasets
   - Test all conflict resolution strategies
+  - Test insert/update/delete operations individually and in mixed batches
+  - Test operation-specific error handling and validation
 
 - [ ] **Documentation**
   - Write user documentation with examples
