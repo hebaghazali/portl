@@ -332,43 +332,162 @@ class CsvDestinationConnector(CsvConnectorMixin, BaseDestinationConnector):
             self.logger.error(f"Failed to create CSV file: {e}")
             raise
     
-    def write_batch(self, rows: List[Dict[str, Any]], conflict_strategy: str = 'overwrite') -> int:
-        """Write a batch of rows to CSV file."""
+    def write_batch(self, rows: List[Dict[str, Any]], conflict_strategy: str = 'overwrite', 
+                   key_columns: Optional[List[str]] = None) -> int:
+        """Write a batch of rows to CSV file with support for insert/update/delete operations."""
         if not rows:
             return 0
         
+        # Group rows by operation type
+        grouped_rows = self._group_rows_by_operation(rows)
+        total_processed = 0
+        
         try:
-            file_path = Path(self.csv_config.path)
-            encoding = self.csv_config.encoding
+            # Process inserts (simple append)
+            if grouped_rows['insert']:
+                total_processed += self._execute_csv_inserts(grouped_rows['insert'])
             
-            # Determine write mode
-            write_mode = 'a' if file_path.exists() else 'w'
-            
-            with open(file_path, write_mode, encoding=encoding, newline='') as f:
-                writer = csv.writer(f, delimiter=self.csv_config.delimiter)
+            # Process updates and deletes (requires reading/rewriting the file)
+            if grouped_rows['update'] or grouped_rows['delete']:
+                if not key_columns:
+                    raise ValueError("key_columns must be specified for update/delete operations")
                 
-                # Write header if this is the first write and headers are enabled
-                if write_mode == 'w' and self.csv_config.has_header:
-                    writer.writerow(rows[0].keys())
-                
-                # Write data rows
-                for row in rows:
-                    # Convert row to list in the same order as headers
-                    if self.csv_config.has_header and write_mode == 'w':
-                        # Use the order from the first row
-                        row_values = [row.get(key) for key in rows[0].keys()]
-                    else:
-                        # Use the order from the row itself
-                        row_values = list(row.values())
-                    
-                    writer.writerow(row_values)
+                total_processed += self._execute_csv_updates_deletes(
+                    grouped_rows['update'], grouped_rows['delete'], key_columns
+                )
             
-            self.logger.info(f"Wrote {len(rows)} rows to CSV")
-            return len(rows)
+            return total_processed
             
         except Exception as e:
             self.logger.error(f"Failed to write CSV batch: {e}")
             raise
+    
+    def _execute_csv_inserts(self, rows: List[Dict[str, Any]]) -> int:
+        """Execute insert operations by appending to CSV file."""
+        if not rows:
+            return 0
+        
+        file_path = Path(self.csv_config.path)
+        encoding = self.csv_config.encoding
+        
+        # Determine write mode
+        write_mode = 'a' if file_path.exists() else 'w'
+        
+        with open(file_path, write_mode, encoding=encoding, newline='') as f:
+            writer = csv.writer(f, delimiter=self.csv_config.delimiter)
+            
+            # Write header if this is the first write and headers are enabled
+            if write_mode == 'w' and self.csv_config.has_header:
+                writer.writerow(rows[0].keys())
+            
+            # Write data rows
+            for row in rows:
+                # Convert row to list in the same order as headers
+                if self.csv_config.has_header and write_mode == 'w':
+                    # Use the order from the first row
+                    row_values = [row.get(key) for key in rows[0].keys()]
+                else:
+                    # Use the order from the row itself
+                    row_values = list(row.values())
+                
+                writer.writerow(row_values)
+        
+        self.logger.info(f"Inserted {len(rows)} rows to CSV")
+        return len(rows)
+    
+    def _execute_csv_updates_deletes(self, update_rows: List[Dict[str, Any]], 
+                                   delete_rows: List[Dict[str, Any]], 
+                                   key_columns: List[str]) -> int:
+        """Execute update and delete operations by rewriting the CSV file."""
+        file_path = Path(self.csv_config.path)
+        
+        if not file_path.exists():
+            self.logger.warning("CSV file doesn't exist for update/delete operations")
+            return 0
+        
+        encoding = self.csv_config.encoding
+        
+        # Read existing data
+        existing_data = []
+        headers = None
+        
+        with open(file_path, 'r', encoding=encoding, newline='') as f:
+            reader = csv.reader(f, delimiter=self.csv_config.delimiter)
+            
+            if self.csv_config.has_header:
+                headers = next(reader, None)
+                if not headers:
+                    self.logger.warning("No headers found in CSV file")
+                    return 0
+            
+            for row_values in reader:
+                if headers:
+                    row_dict = dict(zip(headers, row_values))
+                else:
+                    # If no headers, use column indices
+                    row_dict = {f"col_{i}": val for i, val in enumerate(row_values)}
+                existing_data.append(row_dict)
+        
+        # Create lookup dictionaries for updates and deletes
+        update_lookup = self._create_key_lookup(update_rows, key_columns)
+        delete_lookup = self._create_key_lookup(delete_rows, key_columns)
+        
+        # Process existing data
+        updated_data = []
+        update_count = 0
+        delete_count = 0
+        
+        for existing_row in existing_data:
+            row_key = self._get_row_key(existing_row, key_columns)
+            
+            if row_key in delete_lookup:
+                # Skip this row (delete it)
+                delete_count += 1
+                continue
+            elif row_key in update_lookup:
+                # Update this row
+                updated_row = existing_row.copy()
+                update_data = update_lookup[row_key]
+                
+                # Update only non-key columns
+                for col, value in update_data.items():
+                    if col not in key_columns:
+                        updated_row[col] = value
+                
+                updated_data.append(updated_row)
+                update_count += 1
+            else:
+                # Keep existing row unchanged
+                updated_data.append(existing_row)
+        
+        # Write updated data back to file
+        with open(file_path, 'w', encoding=encoding, newline='') as f:
+            writer = csv.writer(f, delimiter=self.csv_config.delimiter)
+            
+            if self.csv_config.has_header and headers:
+                writer.writerow(headers)
+            
+            for row in updated_data:
+                if headers:
+                    row_values = [row.get(col, '') for col in headers]
+                else:
+                    row_values = list(row.values())
+                writer.writerow(row_values)
+        
+        self.logger.info(f"Updated {update_count} rows, deleted {delete_count} rows in CSV")
+        return update_count + delete_count
+    
+    def _create_key_lookup(self, rows: List[Dict[str, Any]], key_columns: List[str]) -> Dict[tuple, Dict[str, Any]]:
+        """Create a lookup dictionary using key columns."""
+        lookup = {}
+        for row in rows:
+            key = self._get_row_key(row, key_columns)
+            lookup[key] = row
+        return lookup
+    
+    def _get_row_key(self, row: Dict[str, Any], key_columns: List[str]) -> tuple:
+        """Get the key tuple for a row based on key columns."""
+        return tuple(str(row.get(col, '')) for col in key_columns)
     
     def begin_transaction(self) -> None:
         """CSV files don't support transactions, but we can track state."""

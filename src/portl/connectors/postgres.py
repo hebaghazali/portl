@@ -416,40 +416,42 @@ class PostgresDestinationConnector(PostgresConnectorMixin, BaseDestinationConnec
             self.logger.error(f"Failed to create table: {e}")
             raise
     
-    def write_batch(self, rows: List[Dict[str, Any]], conflict_strategy: str = 'overwrite') -> int:
-        """Write a batch of rows to PostgreSQL."""
+    def write_batch(self, rows: List[Dict[str, Any]], conflict_strategy: str = 'overwrite', 
+                   key_columns: Optional[List[str]] = None) -> int:
+        """Write a batch of rows to PostgreSQL with support for insert/update/delete operations."""
         if not rows:
             return 0
         
-        table_id = self._get_table_identifier()
-        columns = list(rows[0].keys())
-        
-        # Build the INSERT query
-        if conflict_strategy == 'overwrite':
-            # Use ON CONFLICT DO UPDATE (requires a primary key or unique constraint)
-            insert_query = self._build_upsert_query(table_id, columns)
-        elif conflict_strategy == 'skip':
-            # Use ON CONFLICT DO NOTHING
-            insert_query = self._build_insert_ignore_query(table_id, columns)
-        elif conflict_strategy == 'fail':
-            # Regular INSERT that will fail on conflicts
-            insert_query = self._build_insert_query(table_id, columns)
-        else:
-            raise ValueError(f"Unsupported conflict strategy: {conflict_strategy}")
+        # Group rows by operation type
+        grouped_rows = self._group_rows_by_operation(rows)
+        total_processed = 0
         
         try:
             conn = self._get_connection()
-            with conn.cursor() as cursor:
-                # Prepare data for batch insert
-                values_list = []
-                for row in rows:
-                    values = tuple(row.get(col) for col in columns)
-                    values_list.append(values)
-                
-                # Execute batch insert
-                psycopg2.extras.execute_batch(cursor, insert_query, values_list)
-                
-                return len(rows)
+            
+            # Process inserts
+            if grouped_rows['insert']:
+                total_processed += self._execute_inserts(
+                    conn, grouped_rows['insert'], conflict_strategy
+                )
+            
+            # Process updates
+            if grouped_rows['update']:
+                if not key_columns:
+                    raise ValueError("key_columns must be specified for update operations")
+                total_processed += self._execute_updates(
+                    conn, grouped_rows['update'], key_columns
+                )
+            
+            # Process deletes
+            if grouped_rows['delete']:
+                if not key_columns:
+                    raise ValueError("key_columns must be specified for delete operations")
+                total_processed += self._execute_deletes(
+                    conn, grouped_rows['delete'], key_columns
+                )
+            
+            return total_processed
                 
         except psycopg2.Error as e:
             self.logger.error(f"Failed to write batch: {e}")
@@ -495,6 +497,119 @@ class PostgresDestinationConnector(PostgresConnectorMixin, BaseDestinationConnec
         """).format(
             table_id, column_list, placeholders, update_list
         )
+        
+        return query.as_string(self._get_connection())
+    
+    def _execute_inserts(self, conn, rows: List[Dict[str, Any]], conflict_strategy: str) -> int:
+        """Execute insert operations."""
+        if not rows:
+            return 0
+        
+        table_id = self._get_table_identifier()
+        columns = list(rows[0].keys())
+        
+        # Build the INSERT query based on conflict strategy
+        if conflict_strategy == 'overwrite':
+            insert_query = self._build_upsert_query(table_id, columns)
+        elif conflict_strategy == 'skip':
+            insert_query = self._build_insert_ignore_query(table_id, columns)
+        elif conflict_strategy == 'fail':
+            insert_query = self._build_insert_query(table_id, columns)
+        else:
+            raise ValueError(f"Unsupported conflict strategy: {conflict_strategy}")
+        
+        with conn.cursor() as cursor:
+            # Prepare data for batch insert
+            values_list = []
+            for row in rows:
+                values = tuple(row.get(col) for col in columns)
+                values_list.append(values)
+            
+            # Execute batch insert
+            psycopg2.extras.execute_batch(cursor, insert_query, values_list)
+            
+        self.logger.info(f"Inserted {len(rows)} rows")
+        return len(rows)
+    
+    def _execute_updates(self, conn, rows: List[Dict[str, Any]], key_columns: List[str]) -> int:
+        """Execute update operations."""
+        if not rows:
+            return 0
+        
+        table_id = self._get_table_identifier()
+        columns = list(rows[0].keys())
+        
+        # Separate key columns from update columns
+        update_columns = [col for col in columns if col not in key_columns]
+        
+        if not update_columns:
+            self.logger.warning("No columns to update (all columns are key columns)")
+            return 0
+        
+        # Build UPDATE query
+        update_query = self._build_update_query(table_id, update_columns, key_columns)
+        
+        with conn.cursor() as cursor:
+            updated_count = 0
+            for row in rows:
+                # Prepare values: update columns first, then key columns for WHERE clause
+                update_values = [row.get(col) for col in update_columns]
+                key_values = [row.get(col) for col in key_columns]
+                values = tuple(update_values + key_values)
+                
+                cursor.execute(update_query, values)
+                updated_count += cursor.rowcount
+            
+        self.logger.info(f"Updated {updated_count} rows")
+        return updated_count
+    
+    def _execute_deletes(self, conn, rows: List[Dict[str, Any]], key_columns: List[str]) -> int:
+        """Execute delete operations."""
+        if not rows:
+            return 0
+        
+        table_id = self._get_table_identifier()
+        
+        # Build DELETE query
+        delete_query = self._build_delete_query(table_id, key_columns)
+        
+        with conn.cursor() as cursor:
+            deleted_count = 0
+            for row in rows:
+                # Prepare key values for WHERE clause
+                key_values = tuple(row.get(col) for col in key_columns)
+                cursor.execute(delete_query, key_values)
+                deleted_count += cursor.rowcount
+            
+        self.logger.info(f"Deleted {deleted_count} rows")
+        return deleted_count
+    
+    def _build_update_query(self, table_id: sql.Identifier, update_columns: List[str], 
+                           key_columns: List[str]) -> str:
+        """Build UPDATE query with WHERE clause."""
+        # SET clause
+        set_clause = sql.SQL(', ').join(
+            sql.SQL("{} = %s").format(sql.Identifier(col)) for col in update_columns
+        )
+        
+        # WHERE clause
+        where_clause = sql.SQL(' AND ').join(
+            sql.SQL("{} = %s").format(sql.Identifier(col)) for col in key_columns
+        )
+        
+        query = sql.SQL("UPDATE {} SET {} WHERE {}").format(
+            table_id, set_clause, where_clause
+        )
+        
+        return query.as_string(self._get_connection())
+    
+    def _build_delete_query(self, table_id: sql.Identifier, key_columns: List[str]) -> str:
+        """Build DELETE query with WHERE clause."""
+        where_clause = sql.SQL(' AND ').join(
+            sql.SQL("{} = %s").format(sql.Identifier(col)) for col in key_columns
+        )
+        
+        query = sql.SQL("DELETE FROM {} WHERE {}").format(table_id, where_clause)
         
         return query.as_string(self._get_connection())
     

@@ -132,16 +132,19 @@ class BaseDestinationConnector(BaseConnector):
         pass
     
     @abstractmethod
-    def write_batch(self, rows: List[Dict[str, Any]], conflict_strategy: str = 'overwrite') -> int:
+    def write_batch(self, rows: List[Dict[str, Any]], conflict_strategy: str = 'overwrite', 
+                   key_columns: Optional[List[str]] = None) -> int:
         """
         Write a batch of rows to the destination.
         
         Args:
-            rows: List of row dictionaries to write
+            rows: List of row dictionaries to write. Each row can optionally include
+                 an '_operation' field with values 'insert', 'update', or 'delete'
             conflict_strategy: How to handle conflicts ('overwrite', 'skip', 'fail', 'merge')
+            key_columns: List of column names to use for matching records in update/delete operations
             
         Returns:
-            Number of rows successfully written
+            Number of rows successfully processed
         """
         pass
     
@@ -171,6 +174,30 @@ class BaseDestinationConnector(BaseConnector):
             self.logger.error(f"Transaction failed, rolling back: {e}")
             self.rollback_transaction()
             raise
+    
+    def _group_rows_by_operation(self, rows: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Group rows by their operation type.
+        
+        Args:
+            rows: List of row dictionaries, optionally with '_operation' field
+            
+        Returns:
+            Dictionary mapping operation types to lists of rows
+        """
+        grouped = {'insert': [], 'update': [], 'delete': []}
+        
+        for row in rows:
+            operation = row.get('_operation', 'insert').lower()
+            if operation not in grouped:
+                self.logger.warning(f"Unknown operation '{operation}', treating as insert")
+                operation = 'insert'
+            
+            # Create a copy without the _operation field for processing
+            clean_row = {k: v for k, v in row.items() if k != '_operation'}
+            grouped[operation].append(clean_row)
+        
+        return grouped
     
     def validate_schema_compatibility(self, source_schema: Dict[str, str]) -> List[str]:
         """
