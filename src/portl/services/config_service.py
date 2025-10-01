@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import yaml
+from ..schema import JobConfig, SchemaValidator, generate_schema_template
 
 
 class ConfigService:
@@ -144,7 +145,7 @@ class ConfigService:
     
     def generate_config_template(self, output_path: Path) -> bool:
         """
-        Generate a configuration file template.
+        Generate a configuration file template using the schema system.
         
         Args:
             output_path: Where to save the template
@@ -152,64 +153,39 @@ class ConfigService:
         Returns:
             True if successful
         """
-        template_config = {
-            '# Portl Configuration File': None,
-            '# This file can be used for non-interactive mode': None,
-            '# Place in your project root as .portl.yaml': None,
-            
-            'source': {
-                'type': 'postgres',  # or mysql, csv, google_sheets
-                'host': '${PORTL_SOURCE_HOST:-localhost}',
-                'port': '${PORTL_SOURCE_PORT:-5432}',
-                'database': '${PORTL_SOURCE_DATABASE}',
-                'username': '${PORTL_SOURCE_USERNAME}',
-                'password': '${PORTL_SOURCE_PASSWORD}',
-                'schema': '${PORTL_SOURCE_SCHEMA:-public}',
-                'table': '${PORTL_SOURCE_TABLE}'
-            },
-            
-            'destination': {
-                'type': 'postgres',  # or mysql, csv, google_sheets
-                'host': '${PORTL_DEST_HOST:-localhost}',
-                'port': '${PORTL_DEST_PORT:-5432}',
-                'database': '${PORTL_DEST_DATABASE}',
-                'username': '${PORTL_DEST_USERNAME}',
-                'password': '${PORTL_DEST_PASSWORD}',
-                'schema': '${PORTL_DEST_SCHEMA:-public}',
-                'table': '${PORTL_DEST_TABLE}'
-            },
-            
-            'conflict': '${PORTL_CONFLICT_STRATEGY:-overwrite}',
-            'batch_size': '${PORTL_BATCH_SIZE:-1000}',
-            'parallel_jobs': '${PORTL_PARALLEL_JOBS:-1}',
-            
-            '# Optional sections': None,
-            'schema_mapping': {
-                '# source_column': 'destination_column'
-            },
-            
-            'transformations': [
-                {
-                    'column': 'example_column',
-                    'operation': 'lowercase'
-                }
-            ],
-            
-            'hooks': {
-                'before_job': './scripts/backup.sh',
-                'after_job': './scripts/notify.sh'
-            }
-        }
-        
         try:
-            yaml_content = self._generate_config_yaml(template_config)
+            # Use the schema-based template generator
+            template_content = generate_schema_template()
             
             with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(yaml_content)
+                f.write(template_content)
             
             return True
         except Exception as e:
             raise ValueError(f"Error generating config template: {e}")
+    
+    def load_validated_config(self, config_path: Optional[Path] = None) -> JobConfig:
+        """
+        Load and validate configuration using the schema system.
+        
+        Args:
+            config_path: Specific config file path, or None to auto-discover
+            
+        Returns:
+            JobConfig: Validated configuration object
+            
+        Raises:
+            ValueError: If configuration is invalid
+            FileNotFoundError: If config file not found
+        """
+        # Load raw configuration
+        raw_config = self.load_config(config_path)
+        
+        if not raw_config:
+            raise ValueError("No configuration found")
+        
+        # Validate using schema system
+        return SchemaValidator.validate_yaml_config(raw_config)
     
     def _generate_config_yaml(self, config: Dict[str, Any]) -> str:
         """Generate YAML content with comments."""

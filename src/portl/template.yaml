@@ -1,45 +1,70 @@
-# Portl Migration Job Configuration Template
-# Edit this file to match your migration requirements
+# Portl Migration Job Configuration
+# Complete template with all available options
 
 source:
-  type: csv  # Options: csv, postgres, mysql, google_sheets
-  path: ./data/source.csv  # For CSV files
-  # For databases, use: host, port, database, username, password, table/query
-  # For Google Sheets, use: spreadsheet_id, sheet_name, credentials_path
+  type: postgres  # Options: postgres, mysql, csv, google_sheets
+  
+  # Database configuration (postgres/mysql)
+  host: localhost
+  port: 5432  # 5432 for postgres, 3306 for mysql
+  database: source_db
+  username: user
+  password: password  # Use environment variables in production
+  schema: public  # Optional, defaults to 'public' for postgres
+  table: source_table  # Either table OR query, not both
+  # query: "SELECT * FROM users WHERE active = true"  # Custom query
+  
+  # CSV configuration
+  # path: ./data/source.csv
+  # delimiter: ","
+  # encoding: utf-8
+  # has_header: true
+  
+  # Google Sheets configuration
+  # spreadsheet_id: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+  # sheet_name: "Sheet1"
+  # credentials_path: ./credentials.json
+  # range_name: "A1:Z1000"  # Optional
 
 destination:
   type: postgres  # Options: postgres, mysql, csv, google_sheets
   host: localhost
   port: 5432
-  database: your_database
-  username: your_username
-  password: your_password  # Consider using environment variables
-  table: your_target_table
+  database: dest_db
+  username: user
+  password: password
+  schema: public
+  table: dest_table
 
-# How to handle conflicts when records already exist
-conflict: overwrite  # Options: overwrite, skip, fail
+# Conflict resolution strategy
+conflict: overwrite  # Options: overwrite, skip, fail, merge
 
 # Processing configuration
-batch_size: 1000
-parallel_jobs: 1
+batch_size: 1000  # Number of rows per batch
+parallel_jobs: 1  # Number of parallel processing jobs
 
-# Optional: Schema mapping for column transformations
-# schema_mapping:
-#   source_column: destination_column
-#   user_id: id
-#   full_name: name
+# Optional: Column mapping (source -> destination)
+schema_mapping:
+  user_id: id
+  full_name: name
+  email_address: email
 
 # Optional: Data transformations
-# transformations:
-#   - column: email
-#     operation: lowercase
-#   - column: created_at
-#     operation: parse_date
-#     format: "%Y-%m-%d"
+transformations:
+  - column: email
+    operation: lowercase
+  - column: created_at
+    operation: parse_date
+    parameters:
+      format: "%Y-%m-%d %H:%M:%S"
+  - column: price
+    operation: parse_number
 
-# Optional: Hooks to run before/after processing
-# hooks:
-#   before_job: ./scripts/backup.sh
-#   after_job: ./scripts/notify.sh
-#   before_batch: ./scripts/log_batch.py
-#   after_batch: ./scripts/validate_batch.py
+# Optional: Processing hooks
+hooks:
+  before_job: ./scripts/backup.sh
+  after_job: ./scripts/notify.sh
+  before_batch: ./scripts/log_batch.py
+  after_batch: ./scripts/validate_batch.py
+  # before_row: "lambda row: print(f'Processing {row}')"
+  # after_row: "lambda row, result: print(f'Processed {row}')"

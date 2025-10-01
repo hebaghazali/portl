@@ -8,6 +8,7 @@ into properly formatted YAML migration job files.
 from typing import Dict, Any, List
 import yaml
 from datetime import datetime
+from ..schema import JobConfig, SchemaValidator
 
 
 class YamlGenerator:
@@ -165,7 +166,7 @@ class YamlGenerator:
     
     def validate_generated_yaml(self, yaml_content: str) -> Dict[str, Any]:
         """
-        Validate the generated YAML content.
+        Validate the generated YAML content using the schema validator.
         
         Args:
             yaml_content: YAML content to validate
@@ -177,39 +178,32 @@ class YamlGenerator:
             # Parse YAML to check syntax
             parsed = yaml.safe_load(yaml_content)
             
+            if not parsed:
+                return {
+                    "valid": False,
+                    "errors": ["YAML content is empty"],
+                    "warnings": []
+                }
+            
+            # Use the schema validator for comprehensive validation
+            job_config = SchemaValidator.validate_yaml_config(parsed)
+            
+            # If we get here, validation passed
             validation_result = {
                 "valid": True,
                 "errors": [],
                 "warnings": []
             }
             
-            # Check required sections
-            required_sections = ['source', 'destination']
-            for section in required_sections:
-                if section not in parsed:
-                    validation_result["errors"].append(f"Missing required section: {section}")
-                    validation_result["valid"] = False
-            
-            # Check source configuration
-            if 'source' in parsed:
-                source_errors = self._validate_source_config(parsed['source'])
-                validation_result["errors"].extend(source_errors)
-                if source_errors:
-                    validation_result["valid"] = False
-            
-            # Check destination configuration
-            if 'destination' in parsed:
-                dest_errors = self._validate_destination_config(parsed['destination'])
-                validation_result["errors"].extend(dest_errors)
-                if dest_errors:
-                    validation_result["valid"] = False
-            
-            # Warnings for missing optional but recommended fields
+            # Add warnings for missing optional but recommended fields
             if 'conflict' not in parsed:
-                validation_result["warnings"].append("No conflict resolution strategy specified")
+                validation_result["warnings"].append("No conflict resolution strategy specified, using default 'overwrite'")
             
             if 'batch_size' not in parsed:
-                validation_result["warnings"].append("No batch size specified")
+                validation_result["warnings"].append("No batch size specified, using default 1000")
+            
+            if 'parallel_jobs' not in parsed:
+                validation_result["warnings"].append("No parallel jobs specified, using default 1")
             
             return validation_result
             
@@ -219,62 +213,15 @@ class YamlGenerator:
                 "errors": [f"YAML syntax error: {e}"],
                 "warnings": []
             }
-    
-    def _validate_source_config(self, source: Dict[str, Any]) -> List[str]:
-        """Validate source configuration."""
-        errors = []
-        
-        if 'type' not in source:
-            errors.append("Source type is required")
-            return errors
-        
-        source_type = source['type']
-        
-        if source_type == 'csv':
-            if 'path' not in source:
-                errors.append("CSV source requires 'path' field")
-        
-        elif source_type in ['postgres', 'mysql']:
-            required_fields = ['host', 'database', 'username']
-            for field in required_fields:
-                if field not in source:
-                    errors.append(f"Database source requires '{field}' field")
-            
-            if 'table' not in source and 'query' not in source:
-                errors.append("Database source requires either 'table' or 'query' field")
-        
-        elif source_type == 'google_sheets':
-            required_fields = ['spreadsheet_id', 'sheet_name']
-            for field in required_fields:
-                if field not in source:
-                    errors.append(f"Google Sheets source requires '{field}' field")
-        
-        return errors
-    
-    def _validate_destination_config(self, destination: Dict[str, Any]) -> List[str]:
-        """Validate destination configuration."""
-        errors = []
-        
-        if 'type' not in destination:
-            errors.append("Destination type is required")
-            return errors
-        
-        dest_type = destination['type']
-        
-        if dest_type == 'csv':
-            if 'path' not in destination:
-                errors.append("CSV destination requires 'path' field")
-        
-        elif dest_type in ['postgres', 'mysql']:
-            required_fields = ['host', 'database', 'username', 'table']
-            for field in required_fields:
-                if field not in destination:
-                    errors.append(f"Database destination requires '{field}' field")
-        
-        elif dest_type == 'google_sheets':
-            required_fields = ['spreadsheet_id', 'sheet_name']
-            for field in required_fields:
-                if field not in destination:
-                    errors.append(f"Google Sheets destination requires '{field}' field")
-        
-        return errors
+        except ValueError as e:
+            return {
+                "valid": False,
+                "errors": [str(e)],
+                "warnings": []
+            }
+        except Exception as e:
+            return {
+                "valid": False,
+                "errors": [f"Validation error: {e}"],
+                "warnings": []
+            }
