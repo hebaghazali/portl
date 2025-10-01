@@ -8,6 +8,7 @@ different data sources like databases, files, and APIs.
 
 from .base import BaseSourceConnector, BaseDestinationConnector
 from .postgres import PostgresSourceConnector, PostgresDestinationConnector
+from .csv import CsvSourceConnector, CsvDestinationConnector
 from .factory import ConnectorFactory
 
 __all__ = [
@@ -15,5 +16,7 @@ __all__ = [
     'BaseDestinationConnector', 
     'PostgresSourceConnector',
     'PostgresDestinationConnector',
+    'CsvSourceConnector',
+    'CsvDestinationConnector',
     'ConnectorFactory'
 ]

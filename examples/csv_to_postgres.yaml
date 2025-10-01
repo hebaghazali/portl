@@ -1,0 +1,42 @@
+# Example: CSV to PostgreSQL Migration
+# This example shows how to migrate data from a CSV file to a PostgreSQL database
+
+source:
+  type: csv
+  path: ./data/users.csv
+  delimiter: ","
+  encoding: utf-8
+  has_header: true
+
+destination:
+  type: postgres
+  host: localhost
+  port: 5432
+  database: mydb
+  username: postgres
+  password: ${POSTGRES_PASSWORD}  # Use environment variable
+  schema: public
+  table: users
+
+# How to handle conflicts (duplicate keys)
+conflict: overwrite  # Options: overwrite, skip, fail, merge
+
+# Processing configuration
+batch_size: 1000     # Process 1000 rows at a time
+parallel_jobs: 1     # Number of parallel processing jobs
+
+# Optional: Map column names between CSV and PostgreSQL
+schema_mapping:
+  user_id: id
+  full_name: name
+  email_address: email
+  registration_date: created_at
+
+# Optional: Data transformations (not yet implemented)
+# transformations:
+#   - column: email
+#     operation: lowercase
+#   - column: registration_date
+#     operation: parse_date
+#     parameters:
+#       format: "%Y-%m-%d %H:%M:%S"
