@@ -34,7 +34,7 @@
 
 ## Core Features Phase
 
-- [ ] **Interactive Migration Orchestrator CLI**
+- [x] **Interactive Migration Orchestrator CLI**
   - Build comprehensive `portl init` interactive wizard with guided question flow
   - **Source & Destination Questions:**
     - Source type selection (Postgres/MySQL/CSV/Google Sheet/Other)

@@ -322,7 +322,7 @@ class WizardService:
     
     def _configure_source(self) -> Dict[str, Any]:
         """Configure source connection."""
-        source_types = ["csv", "postgres", "mysql", "google_sheets"]
+        source_types = ["csv", "postgres", "mysql", "google_sheets", "other"]
         
         self.ui.print_info("What type of data source are you migrating FROM?")
         source_type = self._select_from_list("Source type", source_types)
@@ -335,12 +335,14 @@ class WizardService:
             source_config.update(self._configure_database_source(source_type))
         elif source_type == "google_sheets":
             source_config.update(self._configure_sheets_source())
+        elif source_type == "other":
+            source_config.update(self._configure_other_source())
         
         return source_config
     
     def _configure_destination(self) -> Dict[str, Any]:
         """Configure destination connection."""
-        dest_types = ["postgres", "mysql", "csv", "google_sheets"]
+        dest_types = ["postgres", "mysql", "csv", "google_sheets", "other"]
         
         self.ui.print_info("What type of data destination are you migrating TO?")
         dest_type = self._select_from_list("Destination type", dest_types)
@@ -353,6 +355,8 @@ class WizardService:
             dest_config.update(self._configure_database_destination(dest_type))
         elif dest_type == "google_sheets":
             dest_config.update(self._configure_sheets_destination())
+        elif dest_type == "other":
+            dest_config.update(self._configure_other_destination())
         
         return dest_config
     
@@ -913,3 +917,75 @@ class WizardService:
         self.ui.print_info("• Hook types: scripts, API calls, lambda, notifications")
         
         return self._confirm_with_navigation("Configure advanced options?", default=False)
+    
+    def _configure_other_source(self) -> Dict[str, Any]:
+        """Configure other/custom source type."""
+        self.ui.print_info("Custom source configuration:")
+        self.ui.print_info("This option allows you to specify custom connection parameters")
+        self.ui.print_info("that will be passed through to your custom connector implementation.")
+        
+        config = {}
+        
+        # Get custom type name
+        custom_type = self._prompt_with_navigation(
+            "Custom source type name (e.g., 'mongodb', 'api', 'sqlite')",
+            default="custom"
+        )
+        config['custom_type'] = custom_type
+        
+        # Get connection parameters
+        self.ui.print_info("Enter connection parameters (key=value pairs):")
+        self.ui.print_info("Press Enter with empty key to finish.")
+        
+        params = {}
+        while True:
+            key = typer.prompt("Parameter name", default="", show_default=False)
+            if not key.strip():
+                break
+            
+            value = typer.prompt(f"Value for {key}")
+            params[key] = value
+        
+        config['parameters'] = params
+        
+        # Add note about custom implementation
+        self.ui.print_warning("Note: Custom source types require implementing a custom connector.")
+        self.ui.print_info("See documentation for creating custom connectors.")
+        
+        return config
+    
+    def _configure_other_destination(self) -> Dict[str, Any]:
+        """Configure other/custom destination type."""
+        self.ui.print_info("Custom destination configuration:")
+        self.ui.print_info("This option allows you to specify custom connection parameters")
+        self.ui.print_info("that will be passed through to your custom connector implementation.")
+        
+        config = {}
+        
+        # Get custom type name
+        custom_type = self._prompt_with_navigation(
+            "Custom destination type name (e.g., 'mongodb', 'api', 'sqlite')",
+            default="custom"
+        )
+        config['custom_type'] = custom_type
+        
+        # Get connection parameters
+        self.ui.print_info("Enter connection parameters (key=value pairs):")
+        self.ui.print_info("Press Enter with empty key to finish.")
+        
+        params = {}
+        while True:
+            key = typer.prompt("Parameter name", default="", show_default=False)
+            if not key.strip():
+                break
+            
+            value = typer.prompt(f"Value for {key}")
+            params[key] = value
+        
+        config['parameters'] = params
+        
+        # Add note about custom implementation
+        self.ui.print_warning("Note: Custom destination types require implementing a custom connector.")
+        self.ui.print_info("See documentation for creating custom connectors.")
+        
+        return config

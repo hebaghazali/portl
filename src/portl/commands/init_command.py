@@ -6,6 +6,7 @@ from ..ui.console import ConsoleUI
 from ..services.wizard_service import WizardService
 from ..services.yaml_generator import YamlGenerator
 from ..services.config_service import ConfigService
+from .run_command import RunCommandHandler
 
 
 class InitCommandHandler:
@@ -14,6 +15,7 @@ class InitCommandHandler:
         self.wizard = WizardService()
         self.yaml_generator = YamlGenerator()
         self.config_service = ConfigService()
+        self.run_handler = RunCommandHandler()
     
     def handle(
         self,
@@ -63,6 +65,9 @@ class InitCommandHandler:
                 if saved:
                     # Show summary and next steps
                     self._show_completion_summary(output, config)
+                    
+                    # Ask if user wants to run the migration immediately
+                    self._ask_run_immediately(output, config)
                 else:
                     self.ui.print_warning("Configuration not saved.")
             else:
@@ -206,3 +211,65 @@ class InitCommandHandler:
         self.ui.print_info(f"1. Review the configuration: [cyan]cat {output_path}[/cyan]")
         self.ui.print_info(f"2. Test with dry-run: [cyan]portl run {output_path} --dry-run[/cyan]")
         self.ui.print_info(f"3. Run the migration: [cyan]portl run {output_path}[/cyan]")
+    
+    def _ask_run_immediately(self, output_path: Path, config: Dict[str, Any]) -> None:
+        """Ask user if they want to run the migration immediately."""
+        self.ui.print_info("\n" + "="*60)
+        self.ui.print_info("[bold]⚡ Run Migration Now?[/bold]")
+        self.ui.print_info("="*60)
+        
+        # Show options
+        self.ui.print_info("You can now:")
+        self.ui.print_info("1. [green]Run with dry-run[/green] - Test the migration without writing data")
+        self.ui.print_info("2. [yellow]Run full migration[/yellow] - Execute the actual data migration")
+        self.ui.print_info("3. [cyan]Exit and run later[/cyan] - Use the saved YAML file later")
+        
+        while True:
+            choice = typer.prompt(
+                "\nWhat would you like to do? [1/2/3]",
+                default="1",
+                show_default=True
+            ).strip()
+            
+            if choice == "1":
+                # Run dry-run
+                self.ui.print_info("\n[bold green]🧪 Running Dry-Run Migration...[/bold green]")
+                try:
+                    self.run_handler.handle(
+                        job_file=output_path,
+                        dry_run=True,
+                        verbose=True
+                    )
+                except Exception as e:
+                    self.ui.print_error(f"Dry-run failed: {e}")
+                break
+            
+            elif choice == "2":
+                # Run full migration
+                confirm_full = typer.confirm(
+                    "\n⚠️  This will execute the actual data migration. Are you sure?",
+                    default=False
+                )
+                
+                if confirm_full:
+                    self.ui.print_info("\n[bold red]🚀 Running Full Migration...[/bold red]")
+                    try:
+                        self.run_handler.handle(
+                            job_file=output_path,
+                            dry_run=False,
+                            verbose=True
+                        )
+                    except Exception as e:
+                        self.ui.print_error(f"Migration failed: {e}")
+                else:
+                    self.ui.print_info("Full migration cancelled.")
+                break
+            
+            elif choice == "3":
+                # Exit
+                self.ui.print_info("\n[cyan]Configuration saved successfully![/cyan]")
+                self.ui.print_info(f"Run later with: [cyan]portl run {output_path}[/cyan]")
+                break
+            
+            else:
+                self.ui.print_warning("Invalid choice. Please enter 1, 2, or 3.")
