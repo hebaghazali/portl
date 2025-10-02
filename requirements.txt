@@ -7,10 +7,14 @@ rich>=13.0.0
 # Configuration and data processing
 pyyaml>=6.0
 pandas>=2.0.0
+pydantic>=2.0.0
 
 # Database drivers
 psycopg2-binary>=2.9.0
 pymysql>=1.0.0
+
+# File processing and encoding detection
+chardet>=5.0.0
 
 # Google API integration
 google-api-python-client>=2.0.0
