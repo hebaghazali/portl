@@ -1,4 +1,17 @@
-# Portl Development Todo List
+# Portl Development Todo List (Updated — Workflow Steps DSL v0)
+
+> This update introduces a **minimal workflow/orchestration layer** so Portl can run multi-step jobs (CSV → Lambda → DB upserts/conditionals → API calls → DB queries → API calls) with transactions, context passing, retries, and dry-run. It deliberately avoids growing into a full orchestrator.
+
+---
+
+## Changelog (what changed vs. previous TODO)
+
+* **NEW:** Orchestration Upgrade Phase with **Steps DSL**, **Context/Templating**, **Conditionals**, **Batching**, **Lambda/HTTP connectors**, **Transaction manager**, **Retry/Backoff**, **Dry-run plan preview**.
+* **PRIORITIZED:** Field Mapping System is pulled **forward** (critical for CSV/Lambda → DB).
+* **CLARIFIED:** Rollback semantics (DB-only ACID). For external effects use **idempotency** and optional **outbox**.
+* **ADDED:** Two concrete acceptance flows (your complex use cases) that all features must pass.
+
+---
 
 ## Foundation Phase
 
@@ -32,212 +45,179 @@
     - [x] Display formatted YAML output with syntax highlighting
     - [x] Add YAML validation and error reporting
 
-## Core Features Phase
+## Orchestration Upgrade Phase (High Priority)
 
-- [x] **Interactive Migration Orchestrator CLI**
-  - Build comprehensive `portl init` interactive wizard with guided question flow
-  - **Source & Destination Questions:**
-    - Source type selection (Postgres/MySQL/CSV/Google Sheet/Other)
-    - Database connection details (host/user/db/schema) with config file support
-    - File path for CSV sources
-    - Google Sheet ID and tab name for sheet sources
-    - Destination type and connection details
-    - Destination table name specification
-  - **Operation Type Questions:**
-    - Operation type selection (insert/update/delete/mixed)
-    - For updates: specify key columns for matching records
-    - For deletes: specify key columns for identifying records to delete
-    - For mixed operations: define operation rules per record
-  - **Schema & Mapping Questions:**
-    - Auto-map columns by name vs manual mapping configuration
-    - Column-by-column mapping interface
-    - Auto-create missing columns option (y/n)
-    - Handle extra destination columns (ignore/error)
-  - **Conflict & Transformations Questions:**
-    - Primary key conflict strategy (skip/overwrite/merge/fail)
-    - Update conflict strategy (record not found, constraint violations)
-    - Delete conflict strategy (record not found, foreign key constraints)
-    - Column transformation configuration (date string → datetime, price string → Decimal)
-  - **Hooks Configuration Questions:**
-    - Row-level hooks (before/after each row): script/lambda/API call/none
-    - Batch-level hooks (before/after batch): maintenance notifications, cache clearing
-  - **Batching & Performance Questions:**
-    - Configurable batch size (e.g., 100 rows at a time)
-    - Retry strategy on failure (skip/retry N times/fail fast)
-    - Parallel execution options (y/n, number of workers)
-  - **Validation & Dry Run Questions:**
-    - Dry run preview (first N rows without writing)
-    - Schema compatibility validation before running
-    - Row count comparison between source and destination
-  - **YAML Confirmation & Execution:**
-    - Save configuration to YAML file option
-    - Overwrite vs append for existing YAML files
-    - Run migration immediately vs generate YAML only
-    - Show job plan preview before execution
-    - Interactive confirmation: "⚡ Here's the job plan. Run now? (y/n)"
+> Goal: enable **multi-step jobs** with shared context, conditionals, batching, and robust DB transactions while keeping Portl small and CLI-first.
 
-- [ ] **Source Connectors**
-  - Implement Postgres connector (psycopg2)
-  - Implement MySQL connector (pymysql)
-  - Implement CSV connector (pandas)
-  - Implement Google Sheets connector (google-api-python-client)
-  - Add connection management and error handling
-  - Implement data reading with pagination support
+### 1) Steps DSL (Pydantic schema)
 
-- [ ] **Destination Connectors**
-  - Implement Postgres writer with batch operations (insert/update/delete)
-  - Implement MySQL writer with batch operations (insert/update/delete)
-  - Implement CSV writer with chunking and operation support
-  - Implement Google Sheets writer with batch operations (insert/update/delete)
-  - Add connection management and error handling
-  - Implement data writing with transaction support
-  - Add operation type selection (insert/update/delete) in YAML configuration
+* [ ] Define `JobV2` with `steps: List[Step]`, `transaction`, `connections`.
+* [ ] `Step` base fields: `id`, `type`, `connection?`, `save_as?`, `when?` (Jinja), `batch?`, `retry?`.
+* [ ] Supported `type` (v0): `csv.read`, `db.upsert`, `db.insert`, `db.update`, `db.query_one`, `lambda.invoke`, `api.call`, `conditional`.
+* [ ] `batch` shape: `{ from: <jinja_expr>, as: <alias> }` + implicit `idx`.
+* [ ] `retry` shape: `{ max_attempts, backoff_ms, retry_on? }`.
+* [ ] **Template Integration:** load **`/mnt/data/template.yaml`** in tests to ensure backward-compatible parsing; document any gaps.
 
-- [ ] **Field Mapping System**
-  - Build field mapping engine to transform data between schemas
-  - Support column renaming and type conversion
-  - Add data validation and transformation rules
-  - Implement mapping configuration in YAML
+### 2) Context & Templating
 
-## Advanced Features Phase
+* [ ] Sandboxed Jinja2 env with helpers: `md5`, `tojson`, `json_path`, `now`, `coalesce`, `range`, `int`, `float`.
+* [ ] Expose `steps` results into template scope: `{{ steps.read_csv.rows[idx].code }}`.
+* [ ] Provide `env:` interpolation: `${env:PG_HOST}` in connections.
+* [ ] Validation: fail fast on missing `steps.*` references during `--dry-run` (sampled data).
 
-- [ ] **Conflict Resolution**
-  - Implement skip strategy (ignore conflicts)
-  - Implement overwrite strategy (replace existing)
-  - Implement merge strategy (combine data)
-  - Implement fail strategy (stop on conflict)
-  - Add conflict detection logic for insert/update/delete operations
-  - Handle update conflicts (record not found, constraint violations)
-  - Handle delete conflicts (record not found, foreign key constraints)
+### 3) Transaction Manager (DB scope)
 
-- [ ] **Batch Processing**
-  - Implement configurable batch sizes for insert/update/delete operations
-  - Add progress tracking and reporting
-  - Implement memory-efficient streaming for large datasets
-  - Add batch-level error handling and recovery
-  - Support mixed operation batches (inserts + updates + deletes)
+* [ ] `transaction.scope: db` → open single connection/transaction per job (single-DB v0).
+* [ ] Rollback on any DB step failure; abort job with trace.
+* [ ] Document limitation: external calls are **not** transactional.
 
-- [ ] **Hooks System**
-  - Implement before/after row hooks
-  - Implement before/after batch hooks
-  - Support script execution hooks
-  - Support API call hooks
-  - Add hook error handling and logging
+### 4) DB Steps (Postgres first)
 
-- [ ] **Dry Run Mode**
-  - Implement `--dry-run` flag functionality
-  - Add schema validation and preview
-  - Show sample rows and mapping results
-  - Display row count estimates without writing data
-  - Add validation warnings and errors
-  - Preview operation types (insert/update/delete) for each record
-  - Validate key columns for update/delete operations
+* [ ] `db.upsert(table, key:[...], mapping:{col: expr})` → `ON CONFLICT ... DO UPDATE` + `RETURNING id, (xmax=0 as was_inserted)`.
+* [ ] `db.insert`, `db.update`, `db.query_one` with param binding.
+* [ ] Support parameterized SQL via Jinja → dict params.
+* [ ] MySQL parity: follow after PG green.
 
-## Production Readiness Phase
+### 5) External Connectors
 
-- [ ] **Error Handling & Logging**
-  - Add comprehensive error handling across all components
-  - Implement structured logging with different levels
-  - Add retry mechanisms for transient failures
-  - Create error reporting and recovery strategies
+* [ ] **AWS Lambda**: `lambda.invoke(connection, payload)` via boto3; parse JSON; timeouts + retries.
+* [ ] **HTTP API**: `api.call(method, path|url, headers, body)` via httpx; support `idempotency_key`.
+* [ ] Connection registry: `connections: { pg_main, lambda_ingestor, http_notify }`.
 
-- [ ] **Testing Suite**
-  - Write unit tests for all connectors
-  - Add integration tests for end-to-end workflows
-  - Test error scenarios and edge cases
-  - Add performance tests for large datasets
-  - Test all conflict resolution strategies
-  - Test insert/update/delete operations individually and in mixed batches
-  - Test operation-specific error handling and validation
+### 6) Conditionals & Batching
 
-- [ ] **Documentation**
-  - Write user documentation with examples
-  - Create API documentation for developers
-  - Add migration examples for different scenarios
-  - Write troubleshooting guide
-  - Create video tutorials for common use cases
+* [ ] `conditional` step with `when:` Jinja expression (truthy → `then: [...]`, else → `else: [...]`).
+* [ ] Batch wrapper: evaluate child steps per item, maintaining index alignment across results (arrays per `save_as`).
 
-- [ ] **Packaging & Distribution**
-  - Set up Python packaging with setuptools
-  - Configure PyPI distribution
-  - Add installation instructions
-  - Create Docker image for containerized usage
-  - Set up CI/CD pipeline for automated testing
+### 7) Field Mapping System (**pulled forward**)
 
-- [ ] **Docker Deployment**
-  - Create multi-stage Dockerfile for optimized image size
-  - Add Docker Compose configuration for easy setup
-  - Create Docker image with all dependencies pre-installed
-  - Add volume mounting for data files and job configs
-  - Test Docker image with different data sources
-  - Publish to Docker Hub with automated builds
-  - Add Docker usage documentation and examples
+* [ ] Build mapping engine (rename, type coercion, simple transforms).
+* [ ] Minimum built-ins: string→date, string→decimal, `concat`, `coalesce`, `lower/upper`.
+* [ ] Validation: enforce non-null for required destination cols.
 
-- [ ] **Native Binary Distribution**
-  - Set up PyInstaller for creating standalone executables
-  - Create platform-specific builds (Windows, macOS, Linux)
-  - Implement auto-update mechanism for binaries
-  - Add code signing for Windows/macOS security
-  - Create installer packages (.msi, .dmg, .deb, .rpm)
-  - Set up GitHub Actions for automated binary builds
-  - Test binaries on clean systems without Python installed
-  - Add binary distribution documentation
+### 8) Dry-Run & Plan Preview
 
-- [ ] **Performance Optimization**
-  - Optimize for large datasets with streaming
-  - Implement parallel processing where possible
-  - Add memory management for large files
-  - Optimize database connection pooling
-  - Add performance monitoring and metrics
+* [ ] `portl run --dry-run job.yaml`: resolve templates, sample 1–3 items per batch, show intended SQL and API requests (redacted secrets).
 
-## Future Enhancements
+### 9) Retries & Backoff
 
-- [ ] **Additional Connectors**
-  - Add MongoDB connector
-  - Add SQLite connector
-  - Add BigQuery connector
-  - Add S3 connector for file storage
+* [ ] Implement per-step retries for transient HTTP/Network/Lambda errors; exponential backoff.
+* [ ] DB retries only on safe retryable errors (document).
 
-- [ ] **Advanced Features**
-  - Add data transformation functions (aggregation, filtering)
-  - Implement incremental sync capabilities
-  - Add data quality checks and validation
-  - Create web dashboard for monitoring jobs
+### 10) Logging & Error Model
 
-- [ ] **Meta-Driven Migration System**
-  - Design declarative YAML/JSON specs for migration definitions
-  - Create migration engine that reads specs and generates SQL/operations
-  - Implement reusable migration patterns (suffix handling, conflict resolution, foreign key adjustments)
-  - Build schema-aware utilities that wrap database introspection
-  - Add functions like `migrate_table()`, `add_enum_values()`, `copy_with_suffix_handling()`
+* [ ] Structured logs: `{ts, level, step_id, idx?, event, details}`.
+* [ ] On failure: show step id, batch index, rendered SQL/URL (redacted), root cause.
 
-- [ ] **Migration Automation Layer**
-  - Create CLI tool (`portl-migrate`) for scaffolding migration files
-  - Implement boilerplate conflict handler injection
-  - Enforce consistent naming conventions across migrations
-  - Add migration pattern detection and suggestion system
-  - Build migration validation and preview tools
+### 11) Outbox (Optional v0.1)
 
-- [ ] **Reusable Test Infrastructure**
-  - Create generic pytest fixtures for migration testing
-  - Implement "old table vs new table row counts match" tests
-  - Add "enum coverage is preserved" validation tests
-  - Build reusable test patterns for common migration scenarios
-  - Create migration-specific test utilities and helpers
+* [ ] Step `outbox.enqueue` writes API intents inside the DB transaction; separate `portl outbox drain` worker delivers **after commit**.
+* [ ] Idempotent delivery with dedup keys; DLQ table.
 
 ---
 
-## Getting Started
+## Core Features Phase (revised)
 
-1. Start with **Project Setup** to get your development environment ready
-2. Move through the phases sequentially, but feel free to jump ahead if you need specific features
-3. Test each component thoroughly before moving to the next
-4. Keep the YAML configuration simple and extensible
-5. Focus on error handling early - it will save you time later
+* [x] **Interactive Migration Orchestrator CLI** (baseline) ✅
+* [x] **Source Connectors** (CSV, Postgres) ✅
+* [x] **Destination Connectors** (Postgres/CSV) ✅
+* [ ] **Field Mapping System** ⚠️ **(prioritize now; see Orchestration §7)**
+
+## Advanced Features Phase (revised)
+
+* [ ] **Conflict Resolution** (extend upsert/merge semantics; keep simple now)
+* [ ] **Batch Processing** (progress tracking, memory-efficient streaming) — integrate with Step batching.
+* [ ] **Hooks System** (migrate to step-based; keep legacy hooks for back-compat).
+* [ ] **Dry Run Mode** (now tied to Steps DSL; preview mappings, SQL, API bodies).
+
+## Production Readiness Phase (revised)
+
+* [ ] **Error Handling & Logging** (see Orchestration §10)
+* [ ] **Testing Suite**
+
+  * Unit tests: each step type + templating helpers
+  * Integration: local Postgres + fake HTTP server + moto for Lambda
+  * E2E: the **two acceptance flows** below
+  * Idempotency + retry scenarios
+  * Performance smoke for 100k rows (streamed)
+* [ ] **Documentation**
+
+  * Steps DSL reference (v0)
+  * Connection config + env interpolation
+  * Field mapping cookbook
+  * Dry-run examples
+  * Template alignment with **`template.yaml`** and migration guide
+* [ ] **Packaging & Distribution** (unchanged)
+
+  * PyPI, Docker image, CI/CD
+  * Docker Compose example with Postgres test container
+
+---
+
+## Docker Deployment (unchanged skeleton)
+
+* [ ] Multi-stage Dockerfile, Compose, volumes, examples, publish image.
+
+## Native Binary Distribution (unchanged skeleton)
+
+* [ ] PyInstaller, codesigning, GH Actions builds, installers.
+
+## Performance Optimization (later)
+
+* [ ] Streaming CSV, parallel workers (document ordering guarantees), connection pooling.
+
+---
+
+## Future Enhancements
+
+* [ ] **depends_on** to allow non-linear step graphs (keep linear in v0).
+* [ ] Additional connectors: MongoDB, SQLite, BigQuery, S3.
+* [ ] Incremental syncs, data quality checks, metrics, simple web monitor.
+
+---
+
+## Acceptance Criteria — Must pass these two flows
+
+### Flow A: `CSV → Lambda → Resource upsert → Version conditional → API#1 → Query → API#2`
+
+* [ ] Upsert `resources` by `(code, source)`; return `id`, `was_inserted`.
+* [ ] Conditional for `resources_versions`:
+
+  * Insert if **no version** exists **OR** latest `status = 'published'`.
+  * Else **update** latest (md5, status, updated_at).
+* [ ] API#1 body pulls from **CSV row**, **Lambda output**, and **DB `resource_id`**.
+* [ ] DB query returns latest version; API#2 posts `{resource_id, version_number}`.
+* [ ] Any DB failure → full rollback; re-run is idempotent.
+
+### Flow B: `Lambda → (same version logic) → API#1 → Query → API#2`
+
+* [ ] Same semantics as Flow A, but source is Lambda output (no CSV).
+* [ ] Idempotency for external calls (header/body key) or via Outbox.
+
+---
+
+## Non‑Goals / Explicit Limitations (v0)
+
+* No distributed transactions across multiple databases.
+* No full DAG scheduler, sensors, or UI.
+* External API effects are **not** rolled back; rely on idempotency or outbox compensations.
+
+---
+
+## Coding Agent — Implementation Plan (PR‑sized steps)
+
+1. **PR#1 – Schema & Runner skeleton**: `JobV2`, `Step` models; `ExecutionContext`; Jinja sandbox; `--dry-run` scaffold.
+2. **PR#2 – Postgres DB steps**: `upsert/insert/update/query_one` + transaction manager.
+3. **PR#3 – CSV step + batching + conditional**.
+4. **PR#4 – Lambda connector/step** (moto tests); HTTP connector/step (httpx + test server).
+5. **PR#5 – Field mapping v0 + transforms**.
+6. **PR#6 – Retry/backoff + structured logging + error surfaces.**
+7. **PR#7 – Docs + examples** including adaptation of **`/mnt/data/template.yaml`** and the two acceptance flows.
+
+---
 
 ## Notes
 
-- This project will give you hands-on experience with database connectivity, data pipelines, and CLI development
-- Perfect for learning backend engineering concepts like connection pooling, batch processing, and error handling
-- The modular design will help you understand system architecture and component interaction
-- Consider this a stepping stone toward building more complex financial data pipelines and trading systems
+* Keep legacy single‑source jobs working; add a migration path to Steps DSL.
+* Treat **`/mnt/data/template.yaml`** as the canonical v0 template for generation tests.
+* Favor **small primitives** over a heavy orchestrator; avoid feature creep.
