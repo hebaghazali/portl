@@ -51,7 +51,7 @@
 
 ### 1) Steps DSL (Pydantic schema)
 
-* [ ] Define `JobV2` with `steps: List[Step]`, `transaction`, `connections`.
+* [ ] Define `Job` with `steps: List[Step]`, `transaction`, `connections`.
 * [ ] `Step` base fields: `id`, `type`, `connection?`, `save_as?`, `when?` (Jinja), `batch?`, `retry?`.
 * [ ] Supported `type` (v0): `csv.read`, `db.upsert`, `db.insert`, `db.update`, `db.query_one`, `lambda.invoke`, `api.call`, `conditional`.
 * [ ] `batch` shape: `{ from: <jinja_expr>, as: <alias> }` + implicit `idx`.
@@ -206,7 +206,7 @@
 
 ## Coding Agent — Implementation Plan (PR‑sized steps)
 
-1. **PR#1 – Schema & Runner skeleton**: `JobV2`, `Step` models; `ExecutionContext`; Jinja sandbox; `--dry-run` scaffold.
+1. **PR#1 – Schema & Runner skeleton**: `Job`, `Step` models; `ExecutionContext`; Jinja sandbox; `--dry-run` scaffold.
 2. **PR#2 – Postgres DB steps**: `upsert/insert/update/query_one` + transaction manager.
 3. **PR#3 – CSV step + batching + conditional**.
 4. **PR#4 – Lambda connector/step** (moto tests); HTTP connector/step (httpx + test server).

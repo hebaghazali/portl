@@ -1,70 +1,149 @@
-# Portl Migration Job Configuration
-# Complete template with all available options
+# Portl Job Configuration - Steps DSL
+# Multi-step workflow with transactions, context passing, and retries
 
-source:
-  type: postgres  # Options: postgres, mysql, csv, google_sheets
+# Connection definitions (shared across steps)
+connections:
+  pg_main:
+    type: postgres
+    config:
+      host: ${env:PG_HOST:-localhost}
+      port: 5432
+      database: ${env:PG_DATABASE:-mydb}
+      username: ${env:PG_USER:-user}
+      password: ${env:PG_PASSWORD:-password}
+      schema: public
   
-  # Database configuration (postgres/mysql)
-  host: localhost
-  port: 5432  # 5432 for postgres, 3306 for mysql
-  database: source_db
-  username: user
-  password: password  # Use environment variables in production
-  schema: public  # Optional, defaults to 'public' for postgres
-  table: source_table  # Either table OR query, not both
-  # query: "SELECT * FROM users WHERE active = true"  # Custom query
+  lambda_processor:
+    type: lambda
+    config:
+      region: us-east-1
+      function_name: data-processor
+      timeout: 30
   
-  # CSV configuration
-  # path: ./data/source.csv
-  # delimiter: ","
-  # encoding: utf-8
-  # has_header: true
+  api_notify:
+    type: http
+    config:
+      base_url: https://api.example.com
+      headers:
+        Authorization: "Bearer ${env:API_TOKEN}"
+        Content-Type: application/json
+
+# Transaction management (DB scope only)
+transaction:
+  scope: db  # Options: db, none
+
+# Processing steps (executed in order)
+steps:
+  # Step 1: Read CSV data
+  - id: read_csv
+    type: csv.read
+    save_as: csv_data
+    path: ./data/input.csv
+    delimiter: ","
+    has_header: true
   
-  # Google Sheets configuration
-  # spreadsheet_id: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
-  # sheet_name: "Sheet1"
-  # credentials_path: ./credentials.json
-  # range_name: "A1:Z1000"  # Optional
-
-destination:
-  type: postgres  # Options: postgres, mysql, csv, google_sheets
-  host: localhost
-  port: 5432
-  database: dest_db
-  username: user
-  password: password
-  schema: public
-  table: dest_table
-
-# Conflict resolution strategy
-conflict: overwrite  # Options: overwrite, skip, fail, merge
-
-# Processing configuration
-batch_size: 1000  # Number of rows per batch
-parallel_jobs: 1  # Number of parallel processing jobs
-
-# Optional: Column mapping (source -> destination)
-schema_mapping:
-  user_id: id
-  full_name: name
-  email_address: email
-
-# Optional: Data transformations
-transformations:
-  - column: email
-    operation: lowercase
-  - column: created_at
-    operation: parse_date
-    parameters:
-      format: "%Y-%m-%d %H:%M:%S"
-  - column: price
-    operation: parse_number
-
-# Optional: Processing hooks
-hooks:
-  before_job: ./scripts/backup.sh
-  after_job: ./scripts/notify.sh
-  before_batch: ./scripts/log_batch.py
-  after_batch: ./scripts/validate_batch.py
-  # before_row: "lambda row: print(f'Processing {row}')"
-  # after_row: "lambda row, result: print(f'Processed {row}')"
+  # Step 2: Process data with Lambda (with batching)
+  - id: process_data
+    type: lambda.invoke
+    connection: lambda_processor
+    save_as: processed_data
+    batch:
+      from: "{{ csv_data.rows }}"
+      as: row
+    payload:
+      code: "{{ row.code }}"
+      source: "{{ row.source }}"
+      data: "{{ row | tojson }}"
+    retry:
+      max_attempts: 3
+      backoff_ms: 1000
+      retry_on: ["TimeoutError", "ConnectionError"]
+  
+  # Step 3: Upsert resources to database
+  - id: upsert_resources
+    type: db.upsert
+    connection: pg_main
+    save_as: resource_results
+    table: resources
+    key: ["code", "source"]
+    batch:
+      from: "{{ processed_data }}"
+      as: item
+    mapping:
+      code: "{{ item.code }}"
+      source: "{{ item.source }}"
+      name: "{{ item.processed_name }}"
+      metadata: "{{ item.metadata | tojson }}"
+      updated_at: "{{ now() }}"
+    retry:
+      max_attempts: 2
+      backoff_ms: 500
+  
+  # Step 4: Conditional version handling
+  - id: handle_versions
+    type: conditional
+    when: "{{ resource_results | length > 0 }}"
+    then:
+      # Step 4a: Query existing versions
+      - id: check_versions
+        type: db.query_one
+        connection: pg_main
+        save_as: version_check
+        batch:
+          from: "{{ resource_results }}"
+          as: resource
+        query: |
+          SELECT id, status, version_number 
+          FROM resource_versions 
+          WHERE resource_id = {{ resource.id }}
+          ORDER BY version_number DESC 
+          LIMIT 1
+      
+      # Step 4b: Insert or update version
+      - id: upsert_version
+        type: db.upsert
+        connection: pg_main
+        save_as: version_results
+        table: resource_versions
+        key: ["resource_id"]
+        batch:
+          from: "{{ resource_results }}"
+          as: resource
+        when: "{{ not version_check or version_check.status == 'published' }}"
+        mapping:
+          resource_id: "{{ resource.id }}"
+          version_number: "{{ (version_check.version_number or 0) + 1 }}"
+          content_hash: "{{ resource.metadata | md5 }}"
+          status: "draft"
+          created_at: "{{ now() }}"
+    else:
+      - id: log_no_resources
+        type: api.call
+        connection: api_notify
+        method: POST
+        path: /logs
+        body:
+          level: "info"
+          message: "No resources to process"
+          timestamp: "{{ now() }}"
+  
+  # Step 5: Notify external API
+  - id: notify_completion
+    type: api.call
+    connection: api_notify
+    method: POST
+    path: /webhooks/completion
+    batch:
+      from: "{{ resource_results }}"
+      as: resource
+    body:
+      resource_id: "{{ resource.id }}"
+      version_number: "{{ version_results[idx].version_number }}"
+      status: "processed"
+      timestamp: "{{ now() }}"
+    headers:
+      X-Idempotency-Key: "{{ resource.id }}-{{ resource.updated_at | md5 }}"
+    retry:
+      max_attempts: 5
+      backoff_ms: 2000
+      retry_on: ["HTTPError", "ConnectionError"]

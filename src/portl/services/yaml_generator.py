@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from ..schema import SchemaValidator
+from ..schema import SchemaValidator, generate_Job_template
 
 
 class YamlGenerator:
@@ -25,6 +25,25 @@ class YamlGenerator:
     def generate_yaml(self, config: Dict[str, Any]) -> str:
         """
         Generate a YAML configuration file from wizard responses.
+        Auto-detects format (legacy vs Job) and generates appropriate YAML.
+        
+        Args:
+            config: Configuration dictionary from wizard
+            
+        Returns:
+            str: Formatted YAML content
+        """
+        # Detect format and generate appropriate YAML
+        format_type = self._detect_config_format(config)
+        
+        if format_type == 'Job':
+            return self.generate_Job_yaml(config)
+        else:
+            return self.generate_legacy_yaml(config)
+    
+    def generate_legacy_yaml(self, config: Dict[str, Any]) -> str:
+        """
+        Generate a legacy YAML configuration file from wizard responses.
         
         Args:
             config: Configuration dictionary from wizard
@@ -37,6 +56,45 @@ class YamlGenerator:
         
         # Generate YAML with comments
         yaml_content = self._generate_yaml_with_comments(yaml_config)
+        
+        return yaml_content
+    
+    def _detect_config_format(self, config: Dict[str, Any]) -> str:
+        """
+        Detect whether config is for legacy format or Job.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            str: 'legacy' or 'Job'
+        """
+        # Job format has 'steps' as a key indicator
+        if 'steps' in config:
+            return 'Job'
+        
+        # Legacy format has 'source' and 'destination'
+        if 'source' in config and 'destination' in config:
+            return 'legacy'
+        
+        # Default to legacy for backward compatibility
+        return 'legacy'
+    
+    def generate_Job_yaml(self, config: Dict[str, Any]) -> str:
+        """
+        Generate a Job YAML configuration file with Steps DSL.
+        
+        Args:
+            config: Configuration dictionary with Job structure
+            
+        Returns:
+            str: Formatted Job YAML content
+        """
+        # Create the Job YAML structure
+        yaml_config = self._build_Job_yaml_structure(config)
+        
+        # Generate YAML with comments
+        yaml_content = self._generate_Job_yaml_with_comments(yaml_config)
         
         return yaml_content
     
@@ -345,6 +403,54 @@ class YamlGenerator:
         
         return '\n'.join(lines)
     
+    def _build_Job_yaml_structure(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the Job YAML structure from configuration."""
+        yaml_config = {}
+        
+        # Connections section
+        if 'connections' in config and config['connections']:
+            yaml_config['connections'] = config['connections']
+        
+        # Transaction configuration
+        if 'transaction' in config:
+            yaml_config['transaction'] = config['transaction']
+        
+        # Steps section (required)
+        if 'steps' in config:
+            yaml_config['steps'] = config['steps']
+        
+        return yaml_config
+    
+    def _generate_Job_yaml_with_comments(self, config: Dict[str, Any]) -> str:
+        """Generate Job YAML with helpful comments."""
+        lines = []
+        
+        # Header comment
+        lines.append("# Portl Job Configuration - Steps DSL")
+        lines.append("# Multi-step workflow with transactions, context passing, and retries")
+        lines.append(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append("")
+        
+        # Connections section
+        if 'connections' in config:
+            lines.append("# Connection definitions (shared across steps)")
+            lines.extend(self._yaml_section_to_lines('connections', config['connections']))
+            lines.append("")
+        
+        # Transaction section
+        if 'transaction' in config:
+            lines.append("# Transaction management (DB scope only)")
+            lines.extend(self._yaml_section_to_lines('transaction', config['transaction']))
+            lines.append("")
+        
+        # Steps section
+        if 'steps' in config:
+            lines.append("# Processing steps (executed in order)")
+            lines.extend(self._yaml_section_to_lines('steps', config['steps']))
+            lines.append("")
+        
+        return '\n'.join(lines)
+    
     def _yaml_section_to_lines(self, section_name: str, section_data: Any) -> List[str]:
         """Convert a section to YAML lines."""
         # Use PyYAML to generate the section
@@ -376,7 +482,13 @@ class YamlGenerator:
                 }
             
             # Use the schema validator for comprehensive validation
-            job_config = SchemaValidator.validate_yaml_config(parsed)
+            # Auto-detect format and validate accordingly
+            format_type = SchemaValidator.detect_job_format(parsed)
+            
+            if format_type == 'Job':
+                job_config = SchemaValidator.validate_Job_config(parsed)
+            else:
+                job_config = SchemaValidator.validate_yaml_config(parsed)
             
             # If we get here, validation passed
             validation_result = {
@@ -418,7 +530,69 @@ class YamlGenerator:
     
     def generate_job_plan_preview(self, config: Dict[str, Any]) -> str:
         """
-        Generate a human-readable job plan preview.
+        Generate a human-readable job plan preview (auto-detects format).
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            str: Formatted job plan description
+        """
+        format_type = self._detect_config_format(config)
+        
+        if format_type == 'Job':
+            return self.generate_job_plan_preview_v2(config)
+        else:
+            return self.generate_job_plan_preview_legacy(config)
+    
+    def generate_job_plan_preview_v2(self, config: Dict[str, Any]) -> str:
+        """
+        Generate a human-readable job plan preview for Job.
+        
+        Args:
+            config: Job configuration dictionary
+            
+        Returns:
+            str: Formatted job plan description
+        """
+        lines = []
+        lines.append("Job Workflow Plan")
+        lines.append("=" * 50)
+        
+        # Connections information
+        if 'connections' in config and config['connections']:
+            lines.append(f"\nConnections:")
+            for conn_name, conn_config in config['connections'].items():
+                conn_type = conn_config.get('type', 'Unknown')
+                lines.append(f"   {conn_name}: {conn_type.upper()}")
+        
+        # Transaction information
+        if 'transaction' in config:
+            transaction_scope = config['transaction'].get('scope', 'db')
+            lines.append(f"\nTransaction Scope: {transaction_scope.upper()}")
+        
+        # Steps information
+        if 'steps' in config and config['steps']:
+            lines.append(f"\nProcessing Steps ({len(config['steps'])} steps):")
+            for i, step in enumerate(config['steps'], 1):
+                step_id = step.get('id', f'step_{i}')
+                step_type = step.get('type', 'unknown')
+                connection = step.get('connection', 'none')
+                lines.append(f"   {i}. {step_id} ({step_type})")
+                if connection != 'none':
+                    lines.append(f"      Connection: {connection}")
+                if step.get('save_as'):
+                    lines.append(f"      Saves as: {step['save_as']}")
+                if step.get('when'):
+                    lines.append(f"      Condition: {step['when']}")
+                if step.get('batch'):
+                    lines.append(f"      Batched: {step['batch'].get('from', 'N/A')}")
+        
+        return '\n'.join(lines)
+    
+    def generate_job_plan_preview_legacy(self, config: Dict[str, Any]) -> str:
+        """
+        Generate a human-readable job plan preview for legacy format.
         
         Args:
             config: Configuration dictionary
@@ -580,6 +754,15 @@ class YamlGenerator:
             self.console.print()  # Add spacing
         
         return yaml_content
+    
+    def generate_Job_template(self) -> str:
+        """
+        Generate a Job template with Steps DSL examples.
+        
+        Returns:
+            str: Job template YAML content
+        """
+        return generate_Job_template()
     
     def display_validation_results(self, validation_result: Dict[str, Any]) -> None:
         """
