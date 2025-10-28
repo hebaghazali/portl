@@ -9,7 +9,8 @@ import json
 import hashlib
 from datetime import datetime
 from typing import Any, Dict, Optional
-from jinja2 import Environment, StrictUndefined, select_autoescape, UndefinedError
+from jinja2 import StrictUndefined, UndefinedError
+from jinja2.sandbox import SandboxedEnvironment, SecurityError
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,51 +21,107 @@ class TemplateEngine:
     Sandboxed Jinja2 template engine for step configurations.
     
     Features:
+    - Sandboxed execution (prevents code injection)
     - Strict undefined (errors on missing variables)
-    - Custom helpers (md5, tojson, now, coalesce, etc.)
-    - Safe environment (limited Python access)
+    - Allowlisted filters and globals only
+    - Blocks attribute introspection (__class__, __subclasses__, etc.)
+    
+    Security:
+    Uses SandboxedEnvironment to prevent template escape attacks.
+    All attribute access is validated via is_safe_attribute().
     """
     
     def __init__(self):
-        """Initialize the template engine."""
-        self.env = Environment(
+        """Initialize the sandboxed template engine."""
+        self.env = SandboxedEnvironment(
             undefined=StrictUndefined,
             autoescape=False,  # Don't autoescape - we're not rendering HTML
         )
         
-        # Register custom helpers
-        self._register_helpers()
+        # Override attribute access control
+        self.env.is_safe_attribute = self._is_safe_attribute
+        
+        # Register only safe helpers (allowlist approach)
+        self._register_safe_helpers()
     
-    def _register_helpers(self):
-        """Register custom Jinja2 helpers."""
+    def _is_safe_attribute(self, obj: Any, attr: str, value: Any) -> bool:
+        """
+        Determine if an attribute access is safe.
         
-        # Hash helpers
-        self.env.filters['md5'] = self._md5_hash
+        Security policy:
+        - Block all private attributes (starting with _)
+        - Block class introspection attributes
+        - Block dangerous builtins
         
-        # JSON helpers
-        self.env.filters['tojson'] = self._to_json
-        self.env.filters['fromjson'] = self._from_json
+        Args:
+            obj: Object being accessed
+            attr: Attribute name being accessed
+            value: Attribute value (if already retrieved)
+            
+        Returns:
+            True if access is allowed, False otherwise
+        """
+        # Block all private attributes
+        if attr.startswith('_'):
+            logger.warning(f"Blocked access to private attribute: {attr}")
+            return False
         
-        # Type conversion helpers
-        self.env.filters['int'] = self._to_int
-        self.env.filters['float'] = self._to_float
-        self.env.filters['str'] = str
-        self.env.filters['bool'] = bool
+        # Block known dangerous attributes
+        BLOCKED_ATTRS = {
+            '__class__', '__bases__', '__subclasses__', '__mro__',
+            '__init__', '__globals__', '__builtins__', '__code__',
+            '__closure__', '__func__', '__self__',
+            'eval', 'exec', 'compile', 'open', 'file',
+            'input', '__import__', 'reload',
+        }
         
-        # String helpers
-        self.env.filters['lower'] = lambda s: str(s).lower()
-        self.env.filters['upper'] = lambda s: str(s).upper()
-        self.env.filters['trim'] = lambda s: str(s).strip()
+        if attr in BLOCKED_ATTRS:
+            logger.warning(f"Blocked access to dangerous attribute: {attr}")
+            return False
         
-        # Null handling
-        self.env.filters['coalesce'] = self._coalesce
-        self.env.filters['default'] = self._default
+        return True
+    
+    def _register_safe_helpers(self):
+        """
+        Register only allowlisted filters and globals.
         
-        # Date/time helpers
-        self.env.globals['now'] = self._now
+        Uses an explicit allowlist approach - only these functions
+        are available in templates.
+        """
+        # Allowlist of safe filters
+        SAFE_FILTERS = {
+            'md5': self._md5_hash,
+            'tojson': self._to_json,
+            'fromjson': self._from_json,
+            'int': self._to_int,
+            'float': self._to_float,
+            'str': str,
+            'bool': bool,
+            'upper': lambda s: str(s).upper(),
+            'lower': lambda s: str(s).lower(),
+            'trim': lambda s: str(s).strip(),
+            'coalesce': self._coalesce,
+            'default': self._default,
+            'json_path': self._json_path,
+        }
         
-        # Collection helpers
-        self.env.filters['json_path'] = self._json_path
+        # Allowlist of safe globals
+        SAFE_GLOBALS = {
+            'now': self._now,
+            'range': range,  # Safe built-in
+        }
+        
+        # Clear existing filters/globals and register only safe ones
+        self.env.filters.clear()
+        self.env.globals.clear()
+        
+        for name, func in SAFE_FILTERS.items():
+            self.env.filters[name] = func
+        
+        for name, func in SAFE_GLOBALS.items():
+            self.env.globals[name] = func
+        
+        # Safe tests
         self.env.tests['empty'] = lambda x: not x
     
     @staticmethod

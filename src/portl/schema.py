@@ -218,12 +218,20 @@ class Step:
     retry: Optional[RetryConfig] = None
     config: Dict[str, Any] = field(default_factory=dict)
     
+    # Compensation support (saga-lite)
+    on_error: Literal['fail', 'continue', 'rollback', 'compensate'] = 'fail'
+    compensate_with: Optional[str] = None
+    
     def __post_init__(self):
         """Validate step configuration."""
         if not self.id:
             raise ValueError("Step id is required")
         if not self.type:
             raise ValueError("Step type is required")
+        
+        # Validate compensation configuration
+        if self.on_error == 'compensate' and not self.compensate_with:
+            raise ValueError("on_error='compensate' requires compensate_with step ID")
         
         # Validate step type specific requirements
         if self.type in ['db.upsert', 'db.insert', 'db.update', 'db.query_one']:
@@ -258,6 +266,24 @@ class Job:
         step_ids = [step.id for step in self.steps]
         if len(step_ids) != len(set(step_ids)):
             raise ValueError("Step IDs must be unique")
+        
+        # Build set of step IDs for reference validation
+        step_id_set = set(step_ids)
+        
+        # Validate compensation references
+        for step in self.steps:
+            if step.compensate_with:
+                if step.compensate_with not in step_id_set:
+                    raise ValueError(
+                        f"Step '{step.id}' compensate_with references unknown step '{step.compensate_with}'"
+                    )
+                
+                # Compensation only allowed in db-group transactions
+                if not self.transaction or self.transaction.scope != 'db':
+                    raise ValueError(
+                        f"Step '{step.id}' uses compensation but job has no db-group transaction. "
+                        f"Compensation requires transaction.scope='db'"
+                    )
         
         # Validate connection references
         if self.connections:
@@ -621,8 +647,19 @@ if PYDANTIC_AVAILABLE:
         batch: Optional[Dict[str, Any]] = None  # Batch configuration
         retry: Optional[Dict[str, Any]] = None  # Retry configuration
         
+        # Compensation support (saga-lite)
+        on_error: Literal['fail', 'continue', 'rollback', 'compensate'] = 'fail'
+        compensate_with: Optional[str] = None  # Step ID to run on rollback
+        
         class Config:
             extra = "allow"  # Allow additional fields for step-specific config
+        
+        @validator('compensate_with')
+        def validate_compensation(cls, v, values):
+            """Validate compensation configuration."""
+            if values.get('on_error') == 'compensate' and not v:
+                raise ValueError("on_error='compensate' requires compensate_with step ID")
+            return v
     
     class CSVReadStep(BaseStep):
         """Step to read data from CSV file."""
@@ -672,6 +709,9 @@ if PYDANTIC_AVAILABLE:
         path: str
         headers: Optional[Dict[str, Any]] = None
         body: Optional[Any] = None
+        
+        # Delivery mode: direct or transactional outbox
+        delivery: Literal['direct', 'outbox'] = 'direct'
         idempotency_key: Optional[str] = None
     
     class ConditionalStep(BaseStep):
