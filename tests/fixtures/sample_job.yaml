@@ -1,0 +1,78 @@
+# Sample Job demonstrating compensation + outbox pattern
+# This job exercises the full PR#2 feature set
+
+connections:
+  pg:
+    type: postgres
+    config:
+      host: localhost
+      port: 5433
+      database: portl_test
+      username: portl_test
+      password: portl_test
+
+transaction:
+  scope: db
+
+steps:
+  # Step 1: Reserve inventory (with compensation)
+  - id: reserve_stock
+    type: db.update
+    connection: pg
+    on_error: compensate
+    compensate_with: unreserve_stock
+    config:
+      table: inventory
+      where:
+        sku: "WIDGET-001"
+      mapping:
+        reserved: 10
+  
+  # Step 2: Create order
+  - id: create_order
+    type: db.insert
+    connection: pg
+    config:
+      table: orders
+      mapping:
+        order_number: "ORD-SAMPLE-001"
+        user_id: "user-sample-123"
+        amount: 99.99
+        status: "pending"
+  
+  # Step 3: Query the created order
+  - id: verify_order
+    type: db.query_one
+    connection: pg
+    config:
+      query: "SELECT * FROM orders WHERE order_number = %(order_num)s"
+      params:
+        order_num: "ORD-SAMPLE-001"
+  
+  # Step 4: Notify via outbox (transactional guarantee)
+  - id: notify_webhook
+    type: api.call
+    connection: pg
+    config:
+      delivery: outbox
+      method: POST
+      url: "https://httpbin.org/post"
+      headers:
+        X-Job-Type: "order_processing"
+      body:
+        event: "order_created"
+        order_number: "ORD-SAMPLE-001"
+        amount: 99.99
+      idempotency_key: "sample-order-001"
+  
+  # Compensation step (only runs on failure via compensate_with reference)
+  - id: unreserve_stock
+    type: db.update
+    connection: pg
+    config:
+      table: inventory
+      where:
+        sku: "WIDGET-001"
+      mapping:
+        reserved: 0
+

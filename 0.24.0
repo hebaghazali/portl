@@ -1,0 +1,16 @@
+Collecting httpx
+  Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+Requirement already satisfied: idna in c:\users\hebba\.pyenv\pyenv-win\versions\3.9.13\lib\site-packages (from httpx) (3.10)
+Requirement already satisfied: certifi in c:\users\hebba\.pyenv\pyenv-win\versions\3.9.13\lib\site-packages (from httpx) (2025.1.31)
+Collecting httpcore==1.*
+  Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+Collecting anyio
+  Using cached anyio-4.11.0-py3-none-any.whl (109 kB)
+Collecting h11>=0.16
+  Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+Requirement already satisfied: typing_extensions>=4.5 in c:\users\hebba\.pyenv\pyenv-win\versions\3.9.13\lib\site-packages (from anyio->httpx) (4.13.2)
+Collecting sniffio>=1.1
+  Using cached sniffio-1.3.1-py3-none-any.whl (10 kB)
+Requirement already satisfied: exceptiongroup>=1.0.2 in c:\users\hebba\.pyenv\pyenv-win\versions\3.9.13\lib\site-packages (from anyio->httpx) (1.3.0)
+Installing collected packages: sniffio, h11, httpcore, anyio, httpx
+Successfully installed anyio-4.11.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 sniffio-1.3.1

@@ -59,6 +59,10 @@ class JobEngine:
         self._active_transaction: Optional[Any] = None
         self._transaction_groups: List[TransactionGroup] = []
         
+        # Compensation tracking (saga-lite, LIFO)
+        self._compensation_stack: List[str] = []
+        self._step_lookup: Dict[str, BaseStep] = {step.id: step for step in self.job.steps}
+        
         # Build transaction groups
         self._build_transaction_groups()
     
@@ -260,6 +264,10 @@ class JobEngine:
             if self._active_transaction:
                 logger.warning("Committing dangling transaction at job end")
                 self._active_transaction.commit_transaction()
+                
+                # Flush outbox events after successful commit
+                self._flush_outbox_if_needed(context.run_id)
+                
                 self._active_transaction = None
             
             logger.info(f"Job completed successfully (run_id: {context.run_id})")
@@ -334,6 +342,12 @@ class JobEngine:
             # Update context with result
             context = context.with_step_result(step.id, result)
             
+            # Track successful compensatable steps (LIFO stack)
+            if result.status == StepStatus.OK:
+                if hasattr(step, 'on_error') and step.on_error == 'compensate' and hasattr(step, 'compensate_with') and step.compensate_with:
+                    self._compensation_stack.append(step.compensate_with)
+                    logger.debug(f"Pushed compensation step '{step.compensate_with}' to stack (size: {len(self._compensation_stack)})")
+            
             # Commit transaction if last step in group and successful
             if tx_group and self._is_last_step_in_group(step.id, tx_group):
                 if result.status == StepStatus.OK:
@@ -346,11 +360,74 @@ class JobEngine:
             return context
         
         except Exception as e:
-            # Rollback transaction on error
+            # Run compensations BEFORE rollback
             if tx_group and self._active_transaction:
+                # Run compensations in LIFO order
+                self._run_compensations(context)
+                
+                # Then rollback transaction
                 conn = self._get_connection(step.connection)
                 self._rollback_transaction(tx_group, conn)
-            raise
+            
+            # Honor error policy
+            if hasattr(step, 'on_error') and step.on_error == 'continue':
+                logger.warning(f"Step '{step.id}' failed but continuing due to on_error='continue'")
+                error_result = StepResult(
+                    step_id=step.id,
+                    status=StepStatus.ERROR,
+                    output=None,
+                    metrics={},
+                    error=e,
+                )
+                return context.with_step_result(step.id, error_result)
+            else:
+                raise
+    
+    def _run_compensations(self, context: ExecutionContext):
+        """
+        Run compensation steps in LIFO order.
+        
+        Compensations are executed before rollback, inside the transaction.
+        If a compensation fails, we log the error but continue compensating.
+        
+        Args:
+            context: Current execution context
+        """
+        if not self._compensation_stack:
+            return
+        
+        logger.warning(f"Running {len(self._compensation_stack)} compensation steps (LIFO)")
+        
+        while self._compensation_stack:
+            comp_step_id = self._compensation_stack.pop()
+            comp_step = self._step_lookup.get(comp_step_id)
+            
+            if not comp_step:
+                logger.error(f"Compensation step '{comp_step_id}' not found in job")
+                continue
+            
+            try:
+                logger.info(f"Executing compensation step: {comp_step_id}")
+                
+                # Render step config
+                rendered_step = self._render_step_config(comp_step, context)
+                
+                # Inject connection if needed
+                if comp_step.connection:
+                    conn = self._get_connection(comp_step.connection)
+                    context = context.with_vars(_connection=conn)
+                
+                # Execute compensation
+                comp_result = dispatch_step(rendered_step, context)
+                
+                if comp_result.status == StepStatus.OK:
+                    logger.info(f"Compensation step '{comp_step_id}' completed successfully")
+                else:
+                    logger.error(f"Compensation step '{comp_step_id}' failed with status {comp_result.status}")
+                
+            except Exception as e:
+                logger.error(f"Compensation step '{comp_step_id}' raised exception: {e}")
+                # Continue compensating even if one fails
     
     def _execute_step_batched(self, step: BaseStep, context: ExecutionContext) -> StepResult:
         """
@@ -420,6 +497,32 @@ class JobEngine:
                 'successful_items': len(batch_results),
             },
         )
+    
+    def _flush_outbox_if_needed(self, run_id: str):
+        """
+        Flush outbox events for this run after successful commit.
+        
+        Synchronously delivers all pending outbox events that were enqueued
+        during the job execution.
+        
+        Args:
+            run_id: Job run identifier
+        """
+        try:
+            from ..services.outbox_dispatcher import OutboxDispatcher
+            
+            # Find a database connection that supports outbox
+            for conn_name, conn in self._connections.items():
+                if hasattr(conn, 'fetch_pending_outbox_events'):
+                    logger.info(f"Flushing outbox events for run {run_id}")
+                    dispatcher = OutboxDispatcher(conn)
+                    dispatcher.flush_for_run(run_id)
+                    logger.info(f"Outbox flush completed for run {run_id}")
+                    break
+        
+        except Exception as e:
+            # Don't fail the job if outbox flush fails
+            logger.error(f"Error flushing outbox for run {run_id}: {e}")
     
     def _cleanup_connections(self):
         """Clean up all connections."""
