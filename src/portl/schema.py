@@ -13,6 +13,15 @@ from typing import Dict, Any, Optional, List, Union, Literal
 from pathlib import Path
 import yaml
 
+# Import Pydantic for discriminated union steps
+try:
+    from pydantic import BaseModel, Field as PydanticField, validator
+    PYDANTIC_AVAILABLE = True
+except ImportError:
+    PYDANTIC_AVAILABLE = False
+    BaseModel = object
+    PydanticField = field
+
 
 # Type aliases for better readability
 SourceType = Literal['postgres', 'mysql', 'csv', 'google_sheets']
@@ -590,6 +599,112 @@ hooks:
   # after_row: "lambda row, result: print(f'Processed {row}')"
 """
     return template
+
+
+# ============================================================================
+# Pydantic-based Discriminated Union Step Types (for new execution engine)
+# ============================================================================
+
+if PYDANTIC_AVAILABLE:
+    
+    class BaseStep(BaseModel):
+        """
+        Base step model for Pydantic-based discriminated unions.
+        
+        All step types inherit from this and add type-specific fields.
+        """
+        id: str
+        type: str  # Discriminator field
+        connection: Optional[str] = None
+        save_as: Optional[str] = None
+        when: Optional[str] = None  # Jinja conditional expression
+        batch: Optional[Dict[str, Any]] = None  # Batch configuration
+        retry: Optional[Dict[str, Any]] = None  # Retry configuration
+        
+        class Config:
+            extra = "allow"  # Allow additional fields for step-specific config
+    
+    class CSVReadStep(BaseStep):
+        """Step to read data from CSV file."""
+        type: Literal["csv.read"] = "csv.read"
+        path: str
+        delimiter: str = ","
+        has_header: bool = True
+        encoding: str = "utf-8"
+        limit: Optional[int] = None
+    
+    class DBUpsertStep(BaseStep):
+        """Step to upsert data into database."""
+        type: Literal["db.upsert"] = "db.upsert"
+        table: str
+        key: List[str]  # Columns for ON CONFLICT
+        mapping: Dict[str, Any]  # Column mappings (can contain Jinja templates)
+    
+    class DBInsertStep(BaseStep):
+        """Step to insert data into database."""
+        type: Literal["db.insert"] = "db.insert"
+        table: str
+        mapping: Dict[str, Any]
+    
+    class DBUpdateStep(BaseStep):
+        """Step to update data in database."""
+        type: Literal["db.update"] = "db.update"
+        table: str
+        where: Dict[str, Any]
+        mapping: Dict[str, Any]
+    
+    class DBQueryOneStep(BaseStep):
+        """Step to query single row from database."""
+        type: Literal["db.query_one"] = "db.query_one"
+        query: str  # SQL query (can contain Jinja templates)
+        params: Optional[Dict[str, Any]] = None
+    
+    class LambdaInvokeStep(BaseStep):
+        """Step to invoke AWS Lambda function."""
+        type: Literal["lambda.invoke"] = "lambda.invoke"
+        payload: Dict[str, Any]
+        timeout: int = 30
+    
+    class APICallStep(BaseStep):
+        """Step to make HTTP API call."""
+        type: Literal["api.call"] = "api.call"
+        method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+        path: str
+        headers: Optional[Dict[str, Any]] = None
+        body: Optional[Any] = None
+        idempotency_key: Optional[str] = None
+    
+    class ConditionalStep(BaseStep):
+        """Step for conditional branching."""
+        type: Literal["conditional"] = "conditional"
+        when: str  # Condition expression
+        then: List[Dict[str, Any]]  # Steps to execute if true
+        else_: Optional[List[Dict[str, Any]]] = PydanticField(None, alias="else")
+    
+    # Discriminated union of all step types
+    JobStep = Union[
+        CSVReadStep,
+        DBUpsertStep,
+        DBInsertStep,
+        DBUpdateStep,
+        DBQueryOneStep,
+        LambdaInvokeStep,
+        APICallStep,
+        ConditionalStep,
+    ]
+
+else:
+    # Fallback if Pydantic not available
+    BaseStep = Step
+    CSVReadStep = Step
+    DBUpsertStep = Step
+    DBInsertStep = Step
+    DBUpdateStep = Step
+    DBQueryOneStep = Step
+    LambdaInvokeStep = Step
+    APICallStep = Step
+    ConditionalStep = Step
+    JobStep = Step
 
 
 def generate_Job_template() -> str:

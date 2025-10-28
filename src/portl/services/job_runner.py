@@ -1,13 +1,21 @@
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 import yaml
 import logging
 from datetime import datetime
 
 from .config_service import ConfigService
-from ..schema import JobConfig, SchemaValidator
+from ..schema import JobConfig, Job, SchemaValidator
 from ..connectors.factory import ConnectorFactory, test_connector_connection
 from ..connectors.base import BaseSourceConnector, BaseDestinationConnector
+
+# Import new execution engine
+try:
+    from ..execution.engine import JobEngine
+    NEW_ENGINE_AVAILABLE = True
+except ImportError:
+    NEW_ENGINE_AVAILABLE = False
+    JobEngine = None
 
 
 class JobRunnerConfig:
@@ -108,18 +116,27 @@ class JobRunner:
             # Load job configuration
             job_config = self.load_job_config(config.job_file)
             
-            # Override batch size if specified in runner config
-            if config.batch_size:
-                job_config.batch_size = config.batch_size
-            
             self.logger.info(f"Starting job execution: {config.job_file}")
             self.logger.info(f"Mode: {'Dry Run' if config.dry_run else 'Live Execution'}")
             
-            # Execute the migration
-            if config.dry_run:
-                result = self._execute_dry_run(job_config)
+            # Check if it's new Job DSL or legacy format
+            if isinstance(job_config, Job):
+                # Use new execution engine
+                if not NEW_ENGINE_AVAILABLE:
+                    raise RuntimeError("New Job DSL requires execution engine (install dependencies)")
+                
+                result = self._execute_new_job(job_config, config)
             else:
-                result = self._execute_migration(job_config)
+                # Legacy format - use old execution path
+                # Override batch size if specified in runner config
+                if config.batch_size:
+                    job_config.batch_size = config.batch_size
+                
+                # Execute the migration
+                if config.dry_run:
+                    result = self._execute_dry_run(job_config)
+                else:
+                    result = self._execute_migration(job_config)
             
             # Update execution result
             execution_result.update(result)
@@ -149,21 +166,76 @@ class JobRunner:
             "mode": "Dry Run" if config.dry_run else "Live Execution"
         }
     
-    def load_job_config(self, job_file: Path) -> JobConfig:
+    def load_job_config(self, job_file: Path) -> Union[JobConfig, Job]:
         """
         Load and validate a job configuration from a YAML file.
+        
+        Detects whether it's a legacy JobConfig or new Job DSL format.
         
         Args:
             job_file: Path to the YAML job configuration file
             
         Returns:
-            JobConfig: Validated job configuration
+            JobConfig or Job: Validated job configuration
             
         Raises:
             FileNotFoundError: If the job file doesn't exist
             ValueError: If the configuration is invalid
         """
-        return SchemaValidator.validate_yaml_file(job_file)
+        if not job_file.exists():
+            raise FileNotFoundError(f"Job file not found: {job_file}")
+        
+        with open(job_file, 'r', encoding='utf-8') as f:
+            config_dict = yaml.safe_load(f)
+        
+        # Detect format
+        format_type = SchemaValidator.detect_job_format(config_dict)
+        
+        if format_type == 'Job':
+            return SchemaValidator.validate_Job_config(config_dict)
+        else:
+            return SchemaValidator.validate_yaml_config(config_dict)
+    
+    def _execute_new_job(self, job: Job, config: JobRunnerConfig) -> Dict[str, Any]:
+        """
+        Execute a job using the new execution engine.
+        
+        Args:
+            job: Job configuration with steps DSL
+            config: Job runner configuration
+            
+        Returns:
+            Dictionary with execution results
+        """
+        result = {
+            'rows_processed': 0,
+            'rows_written': 0,
+            'batches_processed': 0,
+            'steps_executed': 0,
+        }
+        
+        try:
+            # Create job engine
+            engine = JobEngine(job, dry_run=config.dry_run)
+            
+            # Execute job
+            final_context = engine.execute(env={})
+            
+            # Extract metrics from context
+            metrics = final_context.get_metrics_summary()
+            
+            result['steps_executed'] = metrics.get('total_steps', 0)
+            result['steps_successful'] = metrics.get('ok_steps', 0)
+            result['steps_failed'] = metrics.get('error_steps', 0)
+            result['steps_skipped'] = metrics.get('skipped_steps', 0)
+            
+            self.logger.info(f"New job completed: {result['steps_executed']} steps executed")
+            
+            return result
+        
+        except Exception as e:
+            self.logger.error(f"New job execution failed: {e}")
+            raise
     
     def _execute_dry_run(self, job_config: JobConfig) -> Dict[str, Any]:
         """
