@@ -627,3 +627,123 @@ class PostgresDestinationConnector(PostgresConnectorMixin, BaseDestinationConnec
         """Rollback the current transaction."""
         conn = self._get_connection()
         conn.rollback()
+    
+    # ========================================================================
+    # Outbox Pattern Support
+    # ========================================================================
+    
+    def insert_outbox_event(
+        self,
+        run_id: str,
+        step_id: str,
+        delivery_type: str,
+        payload: Dict[str, Any],
+        idempotency_key: str
+    ) -> str:
+        """
+        Insert event into outbox table (inside current transaction).
+        
+        Args:
+            run_id: Job run identifier
+            step_id: Step identifier
+            delivery_type: Type of delivery ('api.call', 'lambda.invoke')
+            payload: Event payload (will be JSON serialized)
+            idempotency_key: Idempotency key for delivery
+            
+        Returns:
+            UUID of inserted outbox event
+        """
+        import json
+        
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                INSERT INTO portl_outbox (run_id, step_id, delivery_type, payload, idempotency_key)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """, (run_id, step_id, delivery_type, json.dumps(payload), idempotency_key))
+            
+            event_id = cursor.fetchone()[0]
+            self.logger.debug(f"Inserted outbox event {event_id} for step {step_id}")
+            return str(event_id)
+        
+        finally:
+            cursor.close()
+    
+    def fetch_pending_outbox_events(self, run_id: str, batch_size: int = 50):
+        """
+        Fetch pending outbox events for a specific run (with row locking).
+        
+        Uses FOR UPDATE SKIP LOCKED to allow concurrent workers.
+        
+        Args:
+            run_id: Job run identifier
+            batch_size: Maximum number of events to fetch
+            
+        Returns:
+            List of tuples: (id, delivery_type, payload_json, idempotency_key)
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                SELECT id, delivery_type, payload, idempotency_key
+                FROM portl_outbox
+                WHERE run_id = %s AND status = 'pending'
+                ORDER BY created_at
+                LIMIT %s
+                FOR UPDATE SKIP LOCKED
+            """, (run_id, batch_size))
+            
+            return cursor.fetchall()
+        
+        finally:
+            cursor.close()
+    
+    def mark_outbox_delivered(self, event_id: str):
+        """
+        Mark outbox event as successfully delivered.
+        
+        Args:
+            event_id: Outbox event UUID
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                UPDATE portl_outbox
+                SET status = 'delivered', delivered_at = NOW()
+                WHERE id = %s
+            """, (event_id,))
+            
+            self.logger.debug(f"Marked outbox event {event_id} as delivered")
+        
+        finally:
+            cursor.close()
+    
+    def mark_outbox_failed(self, event_id: str, error: str):
+        """
+        Mark outbox event as failed.
+        
+        Args:
+            event_id: Outbox event UUID
+            error: Error message
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                UPDATE portl_outbox
+                SET status = 'failed', retry_count = retry_count + 1, last_error = %s
+                WHERE id = %s
+            """, (error, event_id))
+            
+            self.logger.warning(f"Marked outbox event {event_id} as failed: {error}")
+        
+        finally:
+            cursor.close()

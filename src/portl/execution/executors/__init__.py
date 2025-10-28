@@ -10,6 +10,7 @@ from . import db_upsert
 from . import db_insert
 from . import db_update
 from . import db_query_one
+from . import api_call
 
 __all__ = [
     'csv_read',
@@ -17,5 +18,6 @@ __all__ = [
     'db_insert',
     'db_update',
     'db_query_one',
+    'api_call',
 ]
 

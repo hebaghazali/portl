@@ -10,6 +10,9 @@ pandas>=2.0.0
 pydantic>=2.0.0
 jinja2>=3.0.0
 
+# HTTP client for API calls and outbox delivery
+httpx>=0.24.0
+
 # Database drivers
 psycopg2-binary>=2.9.0
 pymysql>=1.0.0
