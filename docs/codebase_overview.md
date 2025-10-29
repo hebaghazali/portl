@@ -10,7 +10,8 @@ Portl follows the standard modern Python layout:
 - `tests/` holds automated tests that exercise the CLI surface.
 - `docs/` contains user-facing documentation; the new developer docs live here too.
 - `examples/` provides sample configuration files you can try while developing features.
-- Top-level helper files such as `README.md`, `TODO.md`, and the Docker scripts describe goals and usage patterns for the CLI.
+- Top-level helper files such as `README.md` and the Docker scripts describe goals and usage patterns for the CLI.
+- `docs/development/` contains project planning, PR documentation, and development status files.
 
 ## CLI Entry Point
 
@@ -55,7 +56,7 @@ The default YAML template bundled with the package lives at `src/portl/template.
 
 ## Roadmap and Next Steps
 
-The `TODO.md` file outlines the long-term roadmap. Near-term tasks for new contributors include:
+The `docs/development/TODO.md` file outlines the long-term roadmap. Near-term tasks for new contributors include:
 
 1. Flesh out the `portl init` wizard questions and YAML generation experience.
 2. Implement the YAML parsing and validation pipeline that feeds the job runner.
