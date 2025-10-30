@@ -253,3 +253,178 @@
 * Keep legacy single‑source jobs working; add a migration path to Steps DSL.
 * Treat **`/mnt/data/template.yaml`** as the canonical v0 template for generation tests.
 * Favor **small primitives** over a heavy orchestrator; avoid feature creep.
+
+---
+
+## Upcoming Features
+
+````markdown
+
+## Feature: SQL-from-file in DSL (safe, parameterized SELECTs)
+
+**Goal:** Allow steps to reference a `.sql` file containing a SELECT query for data extraction, instead of inlining long SQL strings in the YAML. This improves readability, reuse, and editor tooling.
+
+### DSL Changes
+
+Add an optional `sql_file` field to read/query steps. For v1 we support it on:
+
+- `db.query_one`
+
+- `db.query_many` *(new step type — thin wrapper over existing query executor; returns rows list)*
+
+- (future) `db.upsert` could use `values_from_sql_file` but **not in v1**
+
+**Rules:**
+
+- `sql` and `sql_file` are **mutually exclusive**.
+
+- `params` remains supported (named parameters).
+
+- Templating allowed inside `.sql` files (Jinja sandbox already in place).
+
+**Examples**
+
+```yaml
+
+steps:
+
+  - id: fetch_customers
+
+    type: db.query_many
+
+    sql_file: queries/customers_by_segment.sql
+
+    params:
+
+      segment: "enterprise"
+
+      limit: 500
+
+  - id: fetch_one
+
+    type: db.query_one
+
+    sql_file: queries/customer_by_id.sql
+
+    params:
+
+      customer_id: "{{ globals.customer_id }}"
+
+```
+
+### File Resolution & Security
+
+* Resolve relative to the job file directory or repo root; **reject absolute paths**.
+
+* Enforce allowlisted directories: default `queries/` (configurable later).
+
+* **Block path traversal**: reject any path containing `..` segments after normalization.
+
+* **Size guard:** max file size 256 KB (configurable).
+
+* **Encoding:** UTF-8 only.
+
+* **Templating:** uses existing Sandboxed Jinja with StrictUndefined; same allowlisted filters/globals.
+
+### Engine/Schema Updates
+
+* **Schema:** add optional `sql_file: str` to `DBQueryOneStep` and new `DBQueryManyStep`.
+
+* Validation:
+
+  * If `sql_file` present → file must exist at plan load time (fail fast).
+
+  * `sql` XOR `sql_file` (never both).
+
+* **Executor:** refactor query executor to support `sql | sql_file`. When `sql_file`, load file once, cache its contents (and compiled template) keyed by absolute path + mtime + size hash.
+
+* **Params binding:** still via named placeholders; preserve current DB driver parameterization (no string concatenation).
+
+* **Observability:** include `sql_source: "inline"|"file:<path>"` in step logs.
+
+* **CSV column validation:** when writing query results to CSV, `csv.write` uses its declared `columns: [...]` as the expected schema. All listed columns must be present in the query result rows; if any are missing, the run fails (fail-fast in dry-run with sampled data). Optionally allow `strict_extra_columns` (default: false) to fail if result contains unexpected columns.
+
+### Caching Behavior
+
+* Maintain a simple in-process cache:
+
+  * key: normalized absolute path + (mtime, size)
+
+  * value: file text + compiled Jinja template
+
+* On cache miss or file changed (mtime/size diff) → reload.
+
+### Errors & Messages
+
+* Missing file → `LoadError: sql_file not found: <path>`
+
+* Disallowed path (absolute or traversal) → `SecurityError: sql_file path not permitted`
+
+* Over size limit → `ValidationError: sql_file exceeds size limit (256 KB)`
+
+* Template variable missing → existing `StrictUndefined` error path
+
+* CSV columns missing → `ValidationError: csv.write expected columns [id, name, age] missing in result: [missing: age]`
+
+### Tests (must add)
+
+1. `test_sql_file_basic_query_many` — loads `queries/simple.sql`, returns expected rows.
+
+2. `test_sql_file_params_binding` — named parameters substituted safely (no injection), driver receives params.
+
+3. `test_sql_file_mutual_exclusive` — specifying both `sql` and `sql_file` fails validation.
+
+4. `test_sql_file_missing` — missing file triggers fail-fast at plan load.
+
+5. `test_sql_file_path_traversal_blocked` — `../secrets.sql` rejected.
+
+6. `test_sql_file_size_guard` — >256 KB rejected.
+
+7. `test_sql_file_template_sandbox` — attempted attribute introspection blocked; safe filters work.
+
+8. `test_sql_file_caching_reload_on_change` — mtime change invalidates cache.
+
+9. `test_csv_write_expected_columns_missing_fails` — query returns fewer/different columns than declared for CSV; job fails with clear error.
+
+10. `test_csv_write_expected_columns_dry_run_preflight` — dry-run preflight detects missing columns before execution.
+
+### Documentation
+
+* Add section “**Using SQL files**” to `QUICK_REFERENCE.md`:
+
+  * syntax, params, security rules, and example.
+
+* Create `docs/ADR-005-sql-from-file.md`:
+
+  * **Context** (long SQL readability, reuse)
+
+  * **Decision** (allow `sql_file` with path allowlist + sandbox)
+
+  * **Consequences** (fail-fast, caching seam, future allowlists per connector)
+
+  * **Alternatives** (inline SQL, stored procedures, views)
+
+### Out of Scope (v1)
+
+* Non-SELECT statements from files (INSERT/UPDATE/DDL).
+
+* Remote SQL storage (S3/Git URLs).
+
+* Per-environment file roots; we can introduce a `queries_root` later.
+
+### Definition of Done
+
+* Schema validation rules implemented.
+
+* Executors support `sql_file`.
+
+* All 8 tests above pass (Postgres fixture).
+
+* Quick Reference updated; ADR-005 added.
+
+* Structured logs include `sql_source`.
+
+* CSV write validates expected columns and fails on missing columns (dry-run and run).
+
+````
+
