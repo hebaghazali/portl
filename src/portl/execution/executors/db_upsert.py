@@ -78,16 +78,16 @@ class DBUpsertExecutor:
             # Detect database type
             db_type = getattr(connection.config, 'type', 'postgres')
             
-        # Get conflict strategy (defaults to 'overwrite')
-        conflict_strategy = config.get('conflict') if hasattr(step, 'config') and isinstance(step.config, dict) else None
-        conflict_strategy = conflict_strategy or getattr(step, 'conflict', None) or 'overwrite'
-        
-        if db_type == 'postgres':
-            sql = self._build_postgres_upsert(table, columns, key_columns, conflict_strategy)
-        elif db_type == 'mysql':
-            sql = self._build_mysql_upsert(table, columns, key_columns, conflict_strategy)
-        else:
-            raise ValueError(f"Unsupported database type: {db_type}")
+            # Get conflict strategy (defaults to 'overwrite')
+            conflict_strategy = config.get('conflict') if hasattr(step, 'config') and isinstance(step.config, dict) else None
+            conflict_strategy = conflict_strategy or getattr(step, 'conflict', None) or 'overwrite'
+            
+            if db_type == 'postgres':
+                sql = self._build_postgres_upsert(table, columns, key_columns, conflict_strategy)
+            elif db_type == 'mysql':
+                sql = self._build_mysql_upsert(table, columns, key_columns, conflict_strategy)
+            else:
+                raise ValueError(f"Unsupported database type: {db_type}")
             
             # Execute upsert
             result = self._execute_upsert(connection, sql, mapping)

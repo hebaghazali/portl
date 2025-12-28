@@ -363,6 +363,32 @@ class TemplateEngine:
         template_str = f"{{% if {condition} %}}true{{% else %}}false{{% endif %}}"
         result = self.render_string(template_str, context)
         return result == 'true'
+    
+    def evaluate_expression(self, expression: str, context: Dict[str, Any]) -> Any:
+        """
+        Evaluate a Jinja2 expression and return the actual Python object.
+        
+        Unlike render_string which returns a string, this method compiles the
+        expression and returns the resulting Python object (list, dict, etc.).
+        
+        Args:
+            expression: Jinja2 expression (e.g., "steps.read_csv.rows")
+            context: Template context
+            
+        Returns:
+            The actual Python object the expression evaluates to
+            
+        Raises:
+            UndefinedError: If expression references missing variable
+        """
+        try:
+            # Compile the expression
+            compiled = self.env.compile_expression(expression)
+            # Evaluate and return the actual object
+            return compiled(**context)
+        except UndefinedError as e:
+            logger.error(f"Expression evaluation failed: {e}")
+            raise
 
 
 # Global template engine instance

@@ -114,9 +114,16 @@ class JobEngine:
             connector = ConnectorFactory.create_destination_connector(conn_config.config)
             connector.connect()
             self._connections[connection_name] = connector
+        elif conn_config.type == 'http':
+            # Create HTTP connection wrapper
+            from ..connectors.http import HTTPConnection
+            self._connections[connection_name] = HTTPConnection(conn_config.config)
+        elif conn_config.type == 'lambda':
+            # Create Lambda connection wrapper
+            from ..connectors.lambda_conn import LambdaConnection
+            self._connections[connection_name] = LambdaConnection(conn_config.config)
         else:
-            # For lambda/http, we'll implement these later
-            raise NotImplementedError(f"Connection type '{conn_config.type}' not yet implemented")
+            raise NotImplementedError(f"Connection type '{conn_config.type}' not supported")
         
         return self._connections[connection_name]
     
@@ -461,9 +468,9 @@ class JobEngine:
         template_context = context.to_template_dict()
         collection_expr = batch_config.from_
         
-        # Render the collection expression
-        collection = self.template_engine.render_string(
-            f"{{{{ {collection_expr} }}}}", 
+        # Evaluate the collection expression to get the actual Python object
+        collection = self.template_engine.evaluate_expression(
+            collection_expr, 
             template_context
         )
         
@@ -543,8 +550,12 @@ class JobEngine:
         """Clean up all connections."""
         for conn_name, conn in self._connections.items():
             try:
+                # Database connectors use disconnect()
                 if hasattr(conn, 'disconnect'):
                     conn.disconnect()
+                # HTTP and Lambda connections use close()
+                elif hasattr(conn, 'close'):
+                    conn.close()
                 logger.debug(f"Closed connection '{conn_name}'")
             except Exception as e:
                 logger.error(f"Error closing connection '{conn_name}': {e}")

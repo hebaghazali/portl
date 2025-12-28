@@ -2,16 +2,18 @@
 API call step executor.
 
 Supports both direct HTTP calls and transactional outbox pattern.
+Uses HTTPConnection wrapper when available for connection pooling.
 """
 
 import httpx
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from ..executor import register_executor
 from ..context import ExecutionContext, StepResult, StepStatus
 from ...schema import BaseStep
 from ...connectors.base import BaseDestinationConnector
+from ...connectors.http import HTTPConnection
 
 logger = logging.getLogger(__name__)
 
@@ -63,21 +65,46 @@ class APICallExecutor:
         Returns:
             StepResult with outbox event ID
         """
+        # For outbox mode, we need a database connection to store the event
+        # Try to get from context - this should be the DB connection for the transaction
+        db_connection = context.current_vars.get('_db_connection')
+        if not db_connection:
+            # Fall back to _connection if it's a DB connector
+            connection = context.current_vars.get('_connection')
+            if connection and isinstance(connection, BaseDestinationConnector):
+                db_connection = connection
+        
+        if not db_connection:
+            raise ValueError(
+                "API call with delivery='outbox' requires a database connection. "
+                "Ensure the step has a db connection or use delivery='direct'."
+            )
+        
+        if not isinstance(db_connection, BaseDestinationConnector):
+            raise TypeError(f"Connection must be a BaseDestinationConnector, got {type(db_connection)}")
+        
+        # Build payload - get HTTP connection config if available for base_url
+        http_conn: Optional[HTTPConnection] = None
         connection = context.current_vars.get('_connection')
-        if not connection:
-            raise ValueError("API call with delivery='outbox' requires a database connection in context")
+        if isinstance(connection, HTTPConnection):
+            http_conn = connection
         
-        if not isinstance(connection, BaseDestinationConnector):
-            raise TypeError(f"Connection must be a BaseDestinationConnector, got {type(connection)}")
-        
-        # Build payload
         method = config.get('method')
         url = config.get('url') or config.get('path')
-        headers = config.get('headers', {})
+        headers = config.get('headers', {}).copy()
         body = config.get('body')
         
         if not method or not url:
             raise ValueError("API call requires 'method' and 'url' fields")
+        
+        # Resolve URL with base_url if HTTP connection is available
+        if http_conn and http_conn.base_url and not url.startswith(('http://', 'https://')):
+            url = f"{http_conn.base_url.rstrip('/')}/{url.lstrip('/')}"
+        
+        # Merge headers from HTTP connection if available
+        if http_conn:
+            merged_headers = {**http_conn.default_headers, **headers}
+            headers = merged_headers
         
         payload = {
             'method': method,
@@ -92,7 +119,7 @@ class APICallExecutor:
         logger.info(f"Enqueueing API call to outbox: {method} {url}")
         
         # Insert into outbox
-        event_id = connection.insert_outbox_event(
+        event_id = db_connection.insert_outbox_event(
             run_id=context.run_id,
             step_id=step.id,
             delivery_type='api.call',
@@ -117,6 +144,9 @@ class APICallExecutor:
         """
         Make immediate HTTP call.
         
+        Uses HTTPConnection wrapper if available for connection pooling
+        and base_url resolution.
+        
         Args:
             step: Step configuration
             context: Execution context
@@ -125,6 +155,12 @@ class APICallExecutor:
         Returns:
             StepResult with HTTP response
         """
+        # Check for HTTP connection wrapper in context
+        http_conn: Optional[HTTPConnection] = None
+        connection = context.current_vars.get('_connection')
+        if isinstance(connection, HTTPConnection):
+            http_conn = connection
+        
         method = config.get('method')
         url = config.get('url') or config.get('path')
         headers = config.get('headers', {}).copy()
@@ -138,23 +174,39 @@ class APICallExecutor:
         if idempotency_key:
             headers['Idempotency-Key'] = idempotency_key
         
-        logger.info(f"Making direct API call: {method} {url}")
-        
         try:
-            response = httpx.request(
-                method=method,
-                url=url,
-                headers=headers,
-                json=body if body else None,
-                timeout=30.0
-            )
+            if http_conn:
+                # Use connection's pooled client with base_url
+                logger.info(f"Making API call via connection: {method} {url}")
+                
+                # Merge headers (step headers override connection defaults)
+                merged_headers = {**http_conn.default_headers, **headers}
+                
+                # Use the connection's request method (handles client pooling)
+                response = http_conn.request(
+                    method=method,
+                    url=url,
+                    headers=merged_headers,
+                    json=body if body else None,
+                )
+            else:
+                # Standalone call (no connection) - create new request
+                logger.info(f"Making standalone API call: {method} {url}")
+                
+                response = httpx.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    json=body if body else None,
+                    timeout=30.0
+                )
             
             response.raise_for_status()
             
             # Try to parse JSON response
             try:
                 response_body = response.json()
-            except:
+            except Exception:
                 response_body = response.text
             
             return StepResult(
@@ -167,10 +219,10 @@ class APICallExecutor:
                 metrics={
                     'delivery': 'direct',
                     'status_code': response.status_code,
+                    'used_connection': http_conn is not None,
                 },
             )
         
         except httpx.HTTPError as e:
             logger.error(f"API call failed: {e}")
             raise
-
