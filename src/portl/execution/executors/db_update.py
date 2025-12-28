@@ -2,6 +2,7 @@
 Database update step executor.
 
 Performs UPDATE operations with WHERE clause and parameter binding.
+Optionally applies field transformations before update.
 """
 
 import logging
@@ -9,6 +10,7 @@ from typing import Dict, Any
 
 from ..executor import register_executor
 from ..context import ExecutionContext, StepResult, StepStatus
+from ..mapping import get_mapping_engine
 from ...schema import BaseStep
 from ...connectors.base import BaseDestinationConnector
 
@@ -45,11 +47,13 @@ class DBUpdateExecutor:
             table = config.get('table')
             where = config.get('where', {})
             mapping = config.get('mapping')
+            transformations = config.get('transformations')
         else:
             # Pydantic Step
             table = getattr(step, 'table', None)
             where = getattr(step, 'where', {})
             mapping = getattr(step, 'mapping', None)
+            transformations = getattr(step, 'transformations', None)
         
         if not table:
             raise ValueError("DB update step requires 'table' field")
@@ -59,6 +63,11 @@ class DBUpdateExecutor:
             raise ValueError("DB update step requires 'where' clause (safety check)")
         
         logger.info(f"Updating table '{table}' with WHERE clause")
+        
+        # Apply transformations to mapping values if configured
+        mapping_engine = get_mapping_engine(transformations=transformations)
+        if mapping_engine:
+            mapping = mapping_engine.apply(mapping)
         
         try:
             # Build update SQL

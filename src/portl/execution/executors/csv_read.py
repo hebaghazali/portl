@@ -2,6 +2,7 @@
 CSV read step executor.
 
 Reads data from CSV files and returns rows as list of dicts.
+Optionally applies field mappings and transformations.
 """
 
 import csv
@@ -11,6 +12,7 @@ import logging
 
 from ..executor import register_executor
 from ..context import ExecutionContext, StepResult, StepStatus
+from ..mapping import get_mapping_engine
 from ...schema import BaseStep, CSVReadStep
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,8 @@ class CSVReadExecutor:
             has_header = config.get('has_header', True)
             encoding = config.get('encoding', 'utf-8')
             limit = config.get('limit', None)
+            schema_mapping = config.get('schema_mapping')
+            transformations = config.get('transformations')
         else:
             # Pydantic Step - config as attributes
             path = getattr(step, 'path', None)
@@ -47,6 +51,8 @@ class CSVReadExecutor:
             has_header = getattr(step, 'has_header', True)
             encoding = getattr(step, 'encoding', 'utf-8')
             limit = getattr(step, 'limit', None)
+            schema_mapping = getattr(step, 'schema_mapping', None)
+            transformations = getattr(step, 'transformations', None)
         
         if not path:
             raise ValueError("CSV read step requires 'path' field")
@@ -87,6 +93,17 @@ class CSVReadExecutor:
             row_count = len(rows)
             logger.info(f"Read {row_count} rows from CSV")
             
+            # Apply field mappings and transformations if configured
+            mapping_engine = get_mapping_engine(schema_mapping, transformations)
+            transforms_applied = False
+            
+            if mapping_engine:
+                logger.info("Applying field mappings and transformations")
+                rows, transform_errors = mapping_engine.apply_batch(rows, collect_errors=False)
+                transforms_applied = True
+                if transform_errors:
+                    logger.warning(f"Transform errors: {len(transform_errors)}")
+            
             return StepResult(
                 step_id=step.id,
                 status=StepStatus.OK,
@@ -94,6 +111,7 @@ class CSVReadExecutor:
                 metrics={
                     'row_count': row_count,
                     'file_path': str(file_path),
+                    'transforms_applied': transforms_applied,
                 },
             )
         

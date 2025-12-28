@@ -10,6 +10,7 @@ from . import db_upsert
 from . import db_insert
 from . import db_update
 from . import db_query_one
+from . import db_query_many
 from . import api_call
 from . import lambda_invoke
 from . import conditional
@@ -20,6 +21,7 @@ __all__ = [
     'db_insert',
     'db_update',
     'db_query_one',
+    'db_query_many',
     'api_call',
     'lambda_invoke',
     'conditional',

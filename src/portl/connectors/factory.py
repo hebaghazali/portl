@@ -11,6 +11,8 @@ import logging
 from .base import BaseSourceConnector, BaseDestinationConnector
 from .postgres import PostgresSourceConnector, PostgresDestinationConnector
 from .csv import CsvSourceConnector, CsvDestinationConnector
+from .mysql import MySQLSourceConnector, MySQLDestinationConnector
+from .google_sheets import GoogleSheetsSourceConnector, GoogleSheetsDestinationConnector
 from ..schema import DatabaseConfig, CsvConfig, GoogleSheetsConfig, SourceConfig, DestinationConfig
 
 logger = logging.getLogger(__name__)
@@ -23,18 +25,16 @@ class ConnectorFactory:
     SOURCE_CONNECTORS = {
         'postgres': PostgresSourceConnector,
         'csv': CsvSourceConnector,
-        # Future connectors will be added here
-        # 'mysql': MySqlSourceConnector,
-        # 'google_sheets': GoogleSheetsSourceConnector,
+        'mysql': MySQLSourceConnector,
+        'google_sheets': GoogleSheetsSourceConnector,
     }
     
     # Registry of available destination connectors
     DESTINATION_CONNECTORS = {
         'postgres': PostgresDestinationConnector,
         'csv': CsvDestinationConnector,
-        # Future connectors will be added here
-        # 'mysql': MySqlDestinationConnector,
-        # 'google_sheets': GoogleSheetsDestinationConnector,
+        'mysql': MySQLDestinationConnector,
+        'google_sheets': GoogleSheetsDestinationConnector,
     }
     
     @classmethod

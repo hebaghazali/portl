@@ -30,7 +30,7 @@ ConflictStrategy = Literal['overwrite', 'skip', 'fail', 'merge']
 TransformOperation = Literal['lowercase', 'uppercase', 'trim', 'parse_date', 'parse_number']
 
 # New Job Step DSL types
-StepType = Literal['csv.read', 'db.upsert', 'db.insert', 'db.update', 'db.query_one', 'lambda.invoke', 'api.call', 'conditional']
+StepType = Literal['csv.read', 'db.upsert', 'db.insert', 'db.update', 'db.query_one', 'db.query_many', 'lambda.invoke', 'api.call', 'conditional']
 TransactionScope = Literal['db', 'none']
 
 
@@ -101,11 +101,17 @@ class TransformationRule:
     column: str
     operation: TransformOperation
     parameters: Dict[str, Any] = field(default_factory=dict)
+    on_error: Literal['fail', 'null', 'skip'] = 'fail'
     
     def __post_init__(self):
         """Validate transformation rule."""
         if self.operation == 'parse_date' and 'format' not in self.parameters:
             self.parameters['format'] = '%Y-%m-%d'
+    
+    def validate(self):
+        """Validate transform is registered and params are valid."""
+        from .execution.mapping import TransformRegistry
+        TransformRegistry.get(self.operation)  # Raises if invalid
 
 
 @dataclass
@@ -693,8 +699,17 @@ if PYDANTIC_AVAILABLE:
     class DBQueryOneStep(BaseStep):
         """Step to query single row from database."""
         type: Literal["db.query_one"] = "db.query_one"
-        query: str  # SQL query (can contain Jinja templates)
+        query: Optional[str] = None  # SQL query (mutually exclusive with sql_file)
+        sql_file: Optional[str] = None  # Path to SQL file (mutually exclusive with query)
         params: Optional[Dict[str, Any]] = None
+    
+    class DBQueryManyStep(BaseStep):
+        """Step to query multiple rows from database."""
+        type: Literal["db.query_many"] = "db.query_many"
+        query: Optional[str] = None  # SQL query (mutually exclusive with sql_file)
+        sql_file: Optional[str] = None  # Path to SQL file (mutually exclusive with query)
+        params: Optional[Dict[str, Any]] = None
+        limit: Optional[int] = None  # Optional row limit
     
     class LambdaInvokeStep(BaseStep):
         """Step to invoke AWS Lambda function."""
@@ -728,6 +743,7 @@ if PYDANTIC_AVAILABLE:
         DBInsertStep,
         DBUpdateStep,
         DBQueryOneStep,
+        DBQueryManyStep,
         LambdaInvokeStep,
         APICallStep,
         ConditionalStep,
@@ -741,6 +757,7 @@ else:
     DBInsertStep = Step
     DBUpdateStep = Step
     DBQueryOneStep = Step
+    DBQueryManyStep = Step
     LambdaInvokeStep = Step
     APICallStep = Step
     ConditionalStep = Step

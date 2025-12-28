@@ -3,6 +3,7 @@ Database upsert step executor.
 
 Performs INSERT ... ON CONFLICT ... DO UPDATE for Postgres
 or INSERT ... ON DUPLICATE KEY UPDATE for MySQL.
+Optionally applies field transformations before upsert.
 """
 
 import logging
@@ -10,6 +11,7 @@ from typing import Dict, Any, List
 
 from ..executor import register_executor
 from ..context import ExecutionContext, StepResult, StepStatus
+from ..mapping import get_mapping_engine
 from ...schema import BaseStep, DBUpsertStep
 from ...connectors.base import BaseDestinationConnector
 
@@ -39,10 +41,20 @@ class DBUpsertExecutor:
         if not isinstance(connection, BaseDestinationConnector):
             raise TypeError(f"Connection must be a BaseDestinationConnector, got {type(connection)}")
         
-        # Get configuration
-        table = getattr(step, 'table', None)
-        key_columns = getattr(step, 'key', None)
-        mapping = getattr(step, 'mapping', None)
+        # Get configuration - check both direct attributes (Pydantic) and config dict (dataclass)
+        if hasattr(step, 'config') and isinstance(step.config, dict):
+            # Dataclass Step - config is in dict
+            config = step.config
+            table = config.get('table')
+            key_columns = config.get('key')
+            mapping = config.get('mapping')
+            transformations = config.get('transformations')
+        else:
+            # Pydantic Step - config as attributes
+            table = getattr(step, 'table', None)
+            key_columns = getattr(step, 'key', None)
+            mapping = getattr(step, 'mapping', None)
+            transformations = getattr(step, 'transformations', None)
         
         if not table:
             raise ValueError("DB upsert step requires 'table' field")
@@ -53,6 +65,11 @@ class DBUpsertExecutor:
         
         logger.info(f"Upserting to table '{table}' with keys {key_columns}")
         
+        # Apply transformations to mapping values if configured
+        mapping_engine = get_mapping_engine(transformations=transformations)
+        if mapping_engine:
+            mapping = mapping_engine.apply(mapping)
+        
         try:
             # Build upsert SQL
             columns = list(mapping.keys())
@@ -61,12 +78,16 @@ class DBUpsertExecutor:
             # Detect database type
             db_type = getattr(connection.config, 'type', 'postgres')
             
-            if db_type == 'postgres':
-                sql = self._build_postgres_upsert(table, columns, key_columns)
-            elif db_type == 'mysql':
-                sql = self._build_mysql_upsert(table, columns, key_columns)
-            else:
-                raise ValueError(f"Unsupported database type: {db_type}")
+        # Get conflict strategy (defaults to 'overwrite')
+        conflict_strategy = config.get('conflict') if hasattr(step, 'config') and isinstance(step.config, dict) else None
+        conflict_strategy = conflict_strategy or getattr(step, 'conflict', None) or 'overwrite'
+        
+        if db_type == 'postgres':
+            sql = self._build_postgres_upsert(table, columns, key_columns, conflict_strategy)
+        elif db_type == 'mysql':
+            sql = self._build_mysql_upsert(table, columns, key_columns, conflict_strategy)
+        else:
+            raise ValueError(f"Unsupported database type: {db_type}")
             
             # Execute upsert
             result = self._execute_upsert(connection, sql, mapping)
@@ -90,7 +111,8 @@ class DBUpsertExecutor:
         self, 
         table: str, 
         columns: List[str], 
-        key_columns: List[str]
+        key_columns: List[str],
+        conflict_strategy: str = 'overwrite'
     ) -> str:
         """
         Build PostgreSQL INSERT ... ON CONFLICT ... DO UPDATE statement.
@@ -99,6 +121,11 @@ class DBUpsertExecutor:
             table: Table name
             columns: All columns to insert/update
             key_columns: Key columns for conflict detection
+            conflict_strategy: How to handle conflicts:
+                - 'overwrite': Replace all non-key columns (default)
+                - 'merge_non_null': Only update if new value is not null
+                - 'merge_newer': Only update if new updated_at > existing
+                - 'skip': Do nothing on conflict
             
         Returns:
             SQL statement with placeholders
@@ -107,28 +134,87 @@ class DBUpsertExecutor:
         cols_str = ', '.join(columns)
         placeholders = ', '.join(['%s'] * len(columns))
         
-        # ON CONFLICT (key1, key2) DO UPDATE SET col1 = EXCLUDED.col1, ...
+        # ON CONFLICT (key1, key2) DO UPDATE SET ...
         conflict_keys = ', '.join(key_columns)
-        update_set = ', '.join([
-            f"{col} = EXCLUDED.{col}"
-            for col in columns if col not in key_columns
-        ])
         
-        sql = f"""
-            INSERT INTO {table} ({cols_str})
-            VALUES ({placeholders})
-            ON CONFLICT ({conflict_keys})
-            DO UPDATE SET {update_set}
-            RETURNING *, (xmax = 0) AS was_inserted
-        """
+        # Build UPDATE SET clause based on strategy
+        update_cols = [col for col in columns if col not in key_columns]
+        update_set = self._build_postgres_update_clause(table, update_cols, conflict_strategy)
+        
+        if conflict_strategy == 'skip':
+            sql = f"""
+                INSERT INTO {table} ({cols_str})
+                VALUES ({placeholders})
+                ON CONFLICT ({conflict_keys})
+                DO NOTHING
+                RETURNING *, FALSE AS was_inserted
+            """
+        else:
+            sql = f"""
+                INSERT INTO {table} ({cols_str})
+                VALUES ({placeholders})
+                ON CONFLICT ({conflict_keys})
+                DO UPDATE SET {update_set}
+                RETURNING *, (xmax = 0) AS was_inserted
+            """
         
         return sql.strip()
+    
+    def _build_postgres_update_clause(
+        self, 
+        table: str, 
+        columns: List[str], 
+        strategy: str
+    ) -> str:
+        """
+        Build UPDATE SET clause based on merge strategy.
+        
+        Args:
+            table: Table name (for referencing existing values)
+            columns: Columns to update
+            strategy: Merge strategy
+            
+        Returns:
+            SET clause string
+        """
+        if strategy == 'overwrite':
+            # Simply overwrite all columns
+            return ', '.join([f"{col} = EXCLUDED.{col}" for col in columns])
+        
+        elif strategy == 'merge_non_null':
+            # Only update if new value is not null, otherwise keep existing
+            return ', '.join([
+                f"{col} = COALESCE(EXCLUDED.{col}, {table}.{col})"
+                for col in columns
+            ])
+        
+        elif strategy == 'merge_newer':
+            # Only update if new updated_at > existing updated_at
+            # Requires 'updated_at' column in the table
+            if 'updated_at' not in columns:
+                logger.warning(
+                    "merge_newer strategy requires 'updated_at' column; "
+                    "falling back to overwrite"
+                )
+                return ', '.join([f"{col} = EXCLUDED.{col}" for col in columns])
+            
+            return ', '.join([
+                f"{col} = CASE WHEN EXCLUDED.updated_at > {table}.updated_at "
+                f"THEN EXCLUDED.{col} ELSE {table}.{col} END"
+                for col in columns
+            ])
+        
+        else:
+            # Unknown strategy, default to overwrite
+            logger.warning(f"Unknown conflict strategy '{strategy}', using 'overwrite'")
+            return ', '.join([f"{col} = EXCLUDED.{col}" for col in columns])
     
     def _build_mysql_upsert(
         self, 
         table: str, 
         columns: List[str], 
-        key_columns: List[str]
+        key_columns: List[str],
+        conflict_strategy: str = 'overwrite'
     ) -> str:
         """
         Build MySQL INSERT ... ON DUPLICATE KEY UPDATE statement.
@@ -137,6 +223,11 @@ class DBUpsertExecutor:
             table: Table name
             columns: All columns to insert/update
             key_columns: Key columns (must have UNIQUE constraint)
+            conflict_strategy: How to handle conflicts:
+                - 'overwrite': Replace all non-key columns (default)
+                - 'merge_non_null': Only update if new value is not null
+                - 'merge_newer': Only update if new updated_at > existing
+                - 'skip': Use INSERT IGNORE
             
         Returns:
             SQL statement with placeholders
@@ -144,11 +235,16 @@ class DBUpsertExecutor:
         cols_str = ', '.join(columns)
         placeholders = ', '.join(['%s'] * len(columns))
         
-        # ON DUPLICATE KEY UPDATE col1 = VALUES(col1), ...
-        update_set = ', '.join([
-            f"{col} = VALUES({col})"
-            for col in columns if col not in key_columns
-        ])
+        if conflict_strategy == 'skip':
+            sql = f"""
+                INSERT IGNORE INTO {table} ({cols_str})
+                VALUES ({placeholders})
+            """
+            return sql.strip()
+        
+        # Build UPDATE clause based on strategy
+        update_cols = [col for col in columns if col not in key_columns]
+        update_set = self._build_mysql_update_clause(table, update_cols, conflict_strategy)
         
         sql = f"""
             INSERT INTO {table} ({cols_str})
@@ -157,6 +253,54 @@ class DBUpsertExecutor:
         """
         
         return sql.strip()
+    
+    def _build_mysql_update_clause(
+        self, 
+        table: str, 
+        columns: List[str], 
+        strategy: str
+    ) -> str:
+        """
+        Build ON DUPLICATE KEY UPDATE clause based on merge strategy.
+        
+        Args:
+            table: Table name
+            columns: Columns to update
+            strategy: Merge strategy
+            
+        Returns:
+            UPDATE clause string
+        """
+        if strategy == 'overwrite':
+            # Simply overwrite all columns
+            return ', '.join([f"{col} = VALUES({col})" for col in columns])
+        
+        elif strategy == 'merge_non_null':
+            # Only update if new value is not null, otherwise keep existing
+            return ', '.join([
+                f"{col} = COALESCE(VALUES({col}), {col})"
+                for col in columns
+            ])
+        
+        elif strategy == 'merge_newer':
+            # Only update if new updated_at > existing updated_at
+            # Requires 'updated_at' column in the table
+            if 'updated_at' not in columns:
+                logger.warning(
+                    "merge_newer strategy requires 'updated_at' column; "
+                    "falling back to overwrite"
+                )
+                return ', '.join([f"{col} = VALUES({col})" for col in columns])
+            
+            return ', '.join([
+                f"{col} = IF(VALUES(updated_at) > updated_at, VALUES({col}), {col})"
+                for col in columns
+            ])
+        
+        else:
+            # Unknown strategy, default to overwrite
+            logger.warning(f"Unknown conflict strategy '{strategy}', using 'overwrite'")
+            return ', '.join([f"{col} = VALUES({col})" for col in columns])
     
     def _execute_upsert(
         self, 

@@ -9,6 +9,8 @@ different data sources like databases, files, and APIs.
 from .base import BaseSourceConnector, BaseDestinationConnector
 from .postgres import PostgresSourceConnector, PostgresDestinationConnector
 from .csv import CsvSourceConnector, CsvDestinationConnector
+from .mysql import MySQLSourceConnector, MySQLDestinationConnector
+from .google_sheets import GoogleSheetsSourceConnector, GoogleSheetsDestinationConnector
 from .factory import ConnectorFactory
 
 __all__ = [
@@ -18,5 +20,9 @@ __all__ = [
     'PostgresDestinationConnector',
     'CsvSourceConnector',
     'CsvDestinationConnector',
+    'MySQLSourceConnector',
+    'MySQLDestinationConnector',
+    'GoogleSheetsSourceConnector',
+    'GoogleSheetsDestinationConnector',
     'ConnectorFactory'
 ]

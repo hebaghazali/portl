@@ -2,6 +2,7 @@
 Database insert step executor.
 
 Performs INSERT operations with parameter binding.
+Optionally applies field transformations before insert.
 """
 
 import logging
@@ -9,6 +10,7 @@ from typing import Dict, Any
 
 from ..executor import register_executor
 from ..context import ExecutionContext, StepResult, StepStatus
+from ..mapping import get_mapping_engine
 from ...schema import BaseStep
 from ...connectors.base import BaseDestinationConnector
 
@@ -44,10 +46,12 @@ class DBInsertExecutor:
             config = step.config
             table = config.get('table')
             mapping = config.get('mapping')
+            transformations = config.get('transformations')
         else:
             # Pydantic Step
             table = getattr(step, 'table', None)
             mapping = getattr(step, 'mapping', None)
+            transformations = getattr(step, 'transformations', None)
         
         if not table:
             raise ValueError("DB insert step requires 'table' field")
@@ -55,6 +59,11 @@ class DBInsertExecutor:
             raise ValueError("DB insert step requires 'mapping' field")
         
         logger.info(f"Inserting into table '{table}'")
+        
+        # Apply transformations to mapping values if configured
+        mapping_engine = get_mapping_engine(transformations=transformations)
+        if mapping_engine:
+            mapping = mapping_engine.apply(mapping)
         
         try:
             # Build insert SQL

@@ -32,11 +32,21 @@ schema_mapping:
   email_address: email
   registration_date: created_at
 
-# Optional: Data transformations (not yet implemented)
-# transformations:
-#   - column: email
-#     operation: lowercase
-#   - column: registration_date
-#     operation: parse_date
-#     parameters:
-#       format: "%Y-%m-%d %H:%M:%S"
+# Optional: Data transformations
+# These are applied after reading from CSV and before writing to PostgreSQL
+transformations:
+  - column: email
+    operation: lowercase
+  - column: email
+    operation: trim
+  - column: registration_date
+    operation: parse_date
+    parameters:
+      format: "%Y-%m-%d %H:%M:%S"
+  - column: full_name
+    operation: trim
+  # Handle missing status with default
+  - column: status
+    operation: coalesce
+    parameters:
+      default: "pending"

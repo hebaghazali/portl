@@ -42,16 +42,18 @@ class JobEngine:
     - Error handling with rollback
     """
     
-    def __init__(self, job: Job, dry_run: bool = False):
+    def __init__(self, job: Job, dry_run: bool = False, job_file: Optional[str] = None):
         """
         Initialize job engine.
         
         Args:
             job: Job configuration with steps
             dry_run: If True, preview execution without side effects
+            job_file: Optional path to the job file (used for resolving relative paths)
         """
         self.job = job
         self.dry_run = dry_run
+        self.job_file = job_file
         self.template_engine = get_template_engine()
         
         # Connection management
@@ -252,6 +254,11 @@ class JobEngine:
         """
         # Initialize execution context
         context = ExecutionContext.new(env=env or {})
+        
+        # Add job file directory for sql_file resolution
+        from pathlib import Path
+        job_file_dir = Path(self.job_file).parent if self.job_file else Path.cwd()
+        context = context.with_vars(_job_file_dir=job_file_dir)
         
         logger.info(f"Starting job execution (run_id: {context.run_id}, dry_run: {self.dry_run})")
         

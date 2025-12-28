@@ -19,3 +19,17 @@ services:
     tmpfs:
       - /var/lib/postgresql/data  # Use tmpfs for faster tests
 
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: test
+      MYSQL_DATABASE: portl_test
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    tmpfs:
+      - /var/lib/mysql  # Use tmpfs for faster tests
