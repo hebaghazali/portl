@@ -336,6 +336,14 @@ class JobEngine:
                     # Store connection in context for executor access
                     context = context.with_vars(_connection=conn)
                 
+                # Inject engine reference for conditional steps
+                if step.type == 'conditional':
+                    context = context.with_vars(_engine=self)
+                
+                # Inject job connections for Lambda and other external connectors
+                if step.type in ['lambda.invoke', 'api.call'] and self.job.connections:
+                    context = context.with_vars(_job_connections=self.job.connections)
+                
                 # Dispatch to executor
                 result = dispatch_step(rendered_step, context)
             

@@ -6,6 +6,9 @@
 pytest>=7.0.0
 pytest-cov>=4.0.0
 
+# AWS mocking for Lambda tests
+moto[lambda]>=4.0.0
+
 # Code formatting and linting
 black>=22.0.0
 flake8>=5.0.0

@@ -11,6 +11,8 @@ from . import db_insert
 from . import db_update
 from . import db_query_one
 from . import api_call
+from . import lambda_invoke
+from . import conditional
 
 __all__ = [
     'csv_read',
@@ -19,5 +21,7 @@ __all__ = [
     'db_update',
     'db_query_one',
     'api_call',
+    'lambda_invoke',
+    'conditional',
 ]
 

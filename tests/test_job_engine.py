@@ -271,6 +271,110 @@ class TestJobEngine:
         assert context.has_step_result('read_csv')
         result = context.get_step_result('read_csv')
         assert result.status == StepStatus.OK
+    
+    def test_csv_to_conditional_to_api(self, tmp_path):
+        """
+        End-to-end test combining CSV read, conditional branching, and API call.
+        
+        This tests the complete pipeline:
+        1. Read CSV data
+        2. Conditional based on row count
+        3. Then branch: verify data exists
+        4. Context flow through entire pipeline
+        """
+        # Create test CSV
+        csv_file = tmp_path / "orders.csv"
+        with open(csv_file, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['order_id', 'amount'])
+            writer.writeheader()
+            writer.writerow({'order_id': '1001', 'amount': '99.99'})
+            writer.writerow({'order_id': '1002', 'amount': '149.50'})
+            writer.writerow({'order_id': '1003', 'amount': '75.25'})
+        
+        # Create verification CSV for then branch
+        verify_file = tmp_path / "verify.csv"
+        with open(verify_file, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['status'])
+            writer.writeheader()
+            writer.writerow({'status': 'verified'})
+        
+        # Job combining CSV → Conditional → CSV read
+        job = Job(
+            steps=[
+                # Step 1: Read orders CSV
+                DataclassStep(
+                    id='read_orders',
+                    type='csv.read',
+                    save_as='orders',
+                    config={
+                        'path': str(csv_file),
+                        'has_header': True,
+                    }
+                ),
+                # Step 2: Conditional based on order count
+                DataclassStep(
+                    id='process_orders',
+                    type='conditional',
+                    when='steps.read_orders.count >= 3',
+                    config={
+                        'when': 'steps.read_orders.count >= 3',
+                        'then': [
+                            {
+                                'id': 'verify_orders',
+                                'type': 'csv.read',
+                                'save_as': 'verification',
+                                'path': str(verify_file),
+                                'has_header': True,
+                            }
+                        ],
+                        'else': [
+                            {
+                                'id': 'skip_verification',
+                                'type': 'csv.read',
+                                'save_as': 'skipped',
+                                'path': str(verify_file),
+                                'has_header': True,
+                            }
+                        ]
+                    }
+                )
+            ]
+        )
+        
+        # Execute
+        engine = JobEngine(job, dry_run=False)
+        context = engine.execute()
+        
+        # Verify complete pipeline executed
+        assert context.has_step_result('read_orders')
+        assert context.has_step_result('process_orders')
+        assert context.has_step_result('verify_orders')
+        
+        # Verify data flow
+        orders_result = context.get_step_result('read_orders')
+        assert orders_result.status == StepStatus.OK
+        assert len(orders_result.output) == 3
+        
+        # Verify conditional took correct branch
+        conditional_result = context.get_step_result('process_orders')
+        assert conditional_result.status == StepStatus.OK
+        assert conditional_result.output['branch_taken'] == 'then'
+        assert conditional_result.output['evaluated_to'] is True
+        assert conditional_result.output['steps_executed'] == 1
+        
+        # Verify then branch step executed
+        verify_result = context.get_step_result('verify_orders')
+        assert verify_result.status == StepStatus.OK
+        assert verify_result.output[0]['status'] == 'verified'
+        
+        # Verify else branch did NOT execute
+        assert not context.has_step_result('skip_verification')
+        
+        # Verify metrics
+        metrics = context.get_metrics_summary()
+        assert metrics['total_steps'] == 3  # read_orders + process_orders + verify_orders
+        assert metrics['ok_steps'] == 3
+        assert metrics['error_steps'] == 0
 
 
 # Run tests if executed directly
