@@ -157,3 +157,4 @@ class DBQueryManyExecutor:
         finally:
             cursor.close()
 
+

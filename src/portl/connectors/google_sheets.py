@@ -402,3 +402,4 @@ class GoogleSheetsDestinationConnector(GoogleSheetsConnectorMixin, BaseDestinati
         """
         logger.warning("rollback_transaction called but Sheets doesn't support rollback")
 
+

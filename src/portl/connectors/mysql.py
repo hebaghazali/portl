@@ -595,3 +595,4 @@ class MySQLDestinationConnector(MySQLConnectorMixin, BaseDestinationConnector):
         conn = self._get_connection()
         conn.rollback()
 
+

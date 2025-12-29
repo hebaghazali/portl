@@ -198,3 +198,4 @@ Common MySQL errors and their meanings:
 3. **Index key columns**: Ensure UNIQUE/PRIMARY KEY indexes for upsert performance
 4. **Use connection pooling**: For high-throughput applications (not yet implemented in Portl)
 
+
