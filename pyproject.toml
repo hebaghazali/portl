@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "portl"
-version = "0.0.1"
+version = "0.2.0"
 description = "A developer-first CLI tool for moving data across databases, CSVs, and Google Sheets"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -50,10 +50,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/portl"
-Documentation = "https://github.com/yourusername/portl#readme"
-Repository = "https://github.com/yourusername/portl"
-Issues = "https://github.com/yourusername/portl/issues"
+Homepage = "https://github.com/hebaghazali/portl"
+Documentation = "https://github.com/hebaghazali/portl#readme"
+Repository = "https://github.com/hebaghazali/portl"
+Issues = "https://github.com/hebaghazali/portl/issues"
 
 [project.scripts]
 portl = "portl.cli:app"

@@ -22,8 +22,11 @@
 
 ### ⚠️ **MINOR GAPS (Non-blocking)**
 - **Performance Tests** - 100k row smoke test pending
-- **Advanced Conflict Resolution** - merge_newer, merge_non_null strategies
 - **Native Binary Distribution** - PyInstaller builds
+
+### ✅ **RECENTLY COMPLETED**
+- **Advanced Conflict Resolution** - merge_newer, merge_non_null, skip strategies with full test coverage
+- **CI Test Workflow** - GitHub Actions workflow for running pytest on PRs/pushes
 
 ---
 
@@ -154,7 +157,7 @@
 
 ## Advanced Features Phase (revised)
 
-* [ ] **Advanced Conflict Resolution** (merge_newer, merge_non_null strategies) — Basic upsert complete
+* [x] **Advanced Conflict Resolution** (merge_newer, merge_non_null, skip strategies) ✅
 * [x] **Batch Processing** (progress tracking, memory-efficient streaming) — integrate with Step batching. ✅
 * [x] **Hooks System** (migrate to step-based; keep legacy hooks for back-compat). ✅
 * [x] **Dry Run Mode** (now tied to Steps DSL; preview mappings, SQL, API bodies). ✅
@@ -249,7 +252,7 @@
 
 ## 🚀 **REMAINING TASKS (Low Priority)**
 1. **Performance smoke test** - Add 100k row CSV processing test
-2. **Advanced conflict resolution** - Add merge_newer, merge_non_null strategies
+2. ~~**Advanced conflict resolution** - merge_newer, merge_non_null strategies~~ ✅ COMPLETED
 3. **Native binary distribution** - PyInstaller builds for Windows/Mac/Linux
 
 ---

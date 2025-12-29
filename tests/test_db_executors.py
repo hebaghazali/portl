@@ -266,6 +266,372 @@ class TestDBExecutors:
         assert 'unique' in str(exc_info.value).lower() or 'duplicate' in str(exc_info.value).lower()
 
 
+class TestUpsertConflictStrategies:
+    """Test suite for db.upsert conflict resolution strategies."""
+    
+    def test_upsert_overwrite_strategy(self, postgres_connection, clean_db):
+        """Test default overwrite strategy replaces all values."""
+        # Insert initial data
+        cursor = postgres_connection.cursor()
+        cursor.execute("""
+            INSERT INTO inventory (sku, quantity, reserved, updated_at)
+            VALUES ('TEST-SKU', 100, 10, NOW() - INTERVAL '1 day')
+        """)
+        postgres_connection.commit()
+        cursor.close()
+        
+        # Upsert with overwrite (default)
+        job = Job(
+            steps=[
+                DataclassStep(
+                    id='upsert_inventory',
+                    type='db.upsert',
+                    connection='pg',
+                    config={
+                        'table': 'inventory',
+                        'key': ['sku'],
+                        'conflict': 'overwrite',
+                        'mapping': {
+                            'sku': 'TEST-SKU',
+                            'quantity': 200,
+                            'reserved': 20,
+                        }
+                    }
+                )
+            ],
+            connections={
+                'pg': ConnectionConfig(
+                    name='pg',
+                    type='postgres',
+                    config={
+                        'host': 'localhost',
+                        'port': 5433,
+                        'database': 'portl_test',
+                        'username': 'portl_test',
+                        'password': 'portl_test',
+                    }
+                )
+            },
+            transaction=TransactionConfig(scope='db')
+        )
+        
+        engine = JobEngine(job, dry_run=False)
+        context = engine.execute()
+        
+        result = context.get_step_result('upsert_inventory')
+        assert result.status == StepStatus.OK
+        
+        # Verify values were overwritten
+        cursor = postgres_connection.cursor()
+        cursor.execute("SELECT quantity, reserved FROM inventory WHERE sku = 'TEST-SKU'")
+        row = cursor.fetchone()
+        assert row[0] == 200  # quantity overwritten
+        assert row[1] == 20   # reserved overwritten
+        cursor.close()
+    
+    def test_upsert_skip_strategy(self, postgres_connection, clean_db):
+        """Test skip strategy does nothing on conflict."""
+        # Insert initial data
+        cursor = postgres_connection.cursor()
+        cursor.execute("""
+            INSERT INTO inventory (sku, quantity, reserved)
+            VALUES ('SKIP-SKU', 100, 10)
+        """)
+        postgres_connection.commit()
+        cursor.close()
+        
+        # Upsert with skip - should not update
+        job = Job(
+            steps=[
+                DataclassStep(
+                    id='upsert_skip',
+                    type='db.upsert',
+                    connection='pg',
+                    config={
+                        'table': 'inventory',
+                        'key': ['sku'],
+                        'conflict': 'skip',
+                        'mapping': {
+                            'sku': 'SKIP-SKU',
+                            'quantity': 999,  # Should NOT be applied
+                            'reserved': 99,   # Should NOT be applied
+                        }
+                    }
+                )
+            ],
+            connections={
+                'pg': ConnectionConfig(
+                    name='pg',
+                    type='postgres',
+                    config={
+                        'host': 'localhost',
+                        'port': 5433,
+                        'database': 'portl_test',
+                        'username': 'portl_test',
+                        'password': 'portl_test',
+                    }
+                )
+            },
+            transaction=TransactionConfig(scope='db')
+        )
+        
+        engine = JobEngine(job, dry_run=False)
+        context = engine.execute()
+        
+        result = context.get_step_result('upsert_skip')
+        assert result.status == StepStatus.OK
+        
+        # Verify original values are preserved
+        cursor = postgres_connection.cursor()
+        cursor.execute("SELECT quantity, reserved FROM inventory WHERE sku = 'SKIP-SKU'")
+        row = cursor.fetchone()
+        assert row[0] == 100  # Original quantity preserved
+        assert row[1] == 10   # Original reserved preserved
+        cursor.close()
+    
+    def test_upsert_skip_inserts_new_record(self, postgres_connection, clean_db):
+        """Test skip strategy still inserts new records."""
+        # Upsert with skip for non-existent record
+        job = Job(
+            steps=[
+                DataclassStep(
+                    id='upsert_skip_new',
+                    type='db.upsert',
+                    connection='pg',
+                    config={
+                        'table': 'inventory',
+                        'key': ['sku'],
+                        'conflict': 'skip',
+                        'mapping': {
+                            'sku': 'NEW-SKU',
+                            'quantity': 50,
+                            'reserved': 5,
+                        }
+                    }
+                )
+            ],
+            connections={
+                'pg': ConnectionConfig(
+                    name='pg',
+                    type='postgres',
+                    config={
+                        'host': 'localhost',
+                        'port': 5433,
+                        'database': 'portl_test',
+                        'username': 'portl_test',
+                        'password': 'portl_test',
+                    }
+                )
+            },
+            transaction=TransactionConfig(scope='db')
+        )
+        
+        engine = JobEngine(job, dry_run=False)
+        context = engine.execute()
+        
+        result = context.get_step_result('upsert_skip_new')
+        assert result.status == StepStatus.OK
+        
+        # Verify new record was inserted
+        cursor = postgres_connection.cursor()
+        cursor.execute("SELECT quantity, reserved FROM inventory WHERE sku = 'NEW-SKU'")
+        row = cursor.fetchone()
+        assert row is not None
+        assert row[0] == 50
+        assert row[1] == 5
+        cursor.close()
+    
+    def test_upsert_merge_non_null_strategy(self, postgres_connection, clean_db):
+        """Test merge_non_null strategy keeps existing values when new is null."""
+        # Insert initial data
+        cursor = postgres_connection.cursor()
+        cursor.execute("""
+            INSERT INTO inventory (sku, quantity, reserved)
+            VALUES ('MERGE-SKU', 100, 10)
+        """)
+        postgres_connection.commit()
+        cursor.close()
+        
+        # Upsert with merge_non_null - only update quantity, keep reserved
+        job = Job(
+            steps=[
+                DataclassStep(
+                    id='upsert_merge',
+                    type='db.upsert',
+                    connection='pg',
+                    config={
+                        'table': 'inventory',
+                        'key': ['sku'],
+                        'conflict': 'merge_non_null',
+                        'mapping': {
+                            'sku': 'MERGE-SKU',
+                            'quantity': 200,      # New value - should update
+                            'reserved': None,     # Null - should keep existing
+                        }
+                    }
+                )
+            ],
+            connections={
+                'pg': ConnectionConfig(
+                    name='pg',
+                    type='postgres',
+                    config={
+                        'host': 'localhost',
+                        'port': 5433,
+                        'database': 'portl_test',
+                        'username': 'portl_test',
+                        'password': 'portl_test',
+                    }
+                )
+            },
+            transaction=TransactionConfig(scope='db')
+        )
+        
+        engine = JobEngine(job, dry_run=False)
+        context = engine.execute()
+        
+        result = context.get_step_result('upsert_merge')
+        assert result.status == StepStatus.OK
+        
+        # Verify: quantity updated, reserved preserved
+        cursor = postgres_connection.cursor()
+        cursor.execute("SELECT quantity, reserved FROM inventory WHERE sku = 'MERGE-SKU'")
+        row = cursor.fetchone()
+        assert row[0] == 200  # Updated to new value
+        assert row[1] == 10   # Preserved (was null in mapping)
+        cursor.close()
+    
+    def test_upsert_merge_newer_strategy(self, postgres_connection, clean_db):
+        """Test merge_newer strategy only updates if new updated_at is more recent."""
+        import datetime
+        
+        # Insert initial data with old timestamp
+        old_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
+        cursor = postgres_connection.cursor()
+        cursor.execute("""
+            INSERT INTO inventory (sku, quantity, reserved, updated_at)
+            VALUES ('NEWER-SKU', 100, 10, %s)
+        """, (old_time,))
+        postgres_connection.commit()
+        cursor.close()
+        
+        # Upsert with merge_newer - new timestamp should win
+        new_time = datetime.datetime.now(datetime.timezone.utc)
+        job = Job(
+            steps=[
+                DataclassStep(
+                    id='upsert_newer',
+                    type='db.upsert',
+                    connection='pg',
+                    config={
+                        'table': 'inventory',
+                        'key': ['sku'],
+                        'conflict': 'merge_newer',
+                        'mapping': {
+                            'sku': 'NEWER-SKU',
+                            'quantity': 200,
+                            'reserved': 20,
+                            'updated_at': new_time.isoformat(),
+                        }
+                    }
+                )
+            ],
+            connections={
+                'pg': ConnectionConfig(
+                    name='pg',
+                    type='postgres',
+                    config={
+                        'host': 'localhost',
+                        'port': 5433,
+                        'database': 'portl_test',
+                        'username': 'portl_test',
+                        'password': 'portl_test',
+                    }
+                )
+            },
+            transaction=TransactionConfig(scope='db')
+        )
+        
+        engine = JobEngine(job, dry_run=False)
+        context = engine.execute()
+        
+        result = context.get_step_result('upsert_newer')
+        assert result.status == StepStatus.OK
+        
+        # Verify values were updated (newer timestamp wins)
+        cursor = postgres_connection.cursor()
+        cursor.execute("SELECT quantity, reserved FROM inventory WHERE sku = 'NEWER-SKU'")
+        row = cursor.fetchone()
+        assert row[0] == 200  # Updated
+        assert row[1] == 20   # Updated
+        cursor.close()
+    
+    def test_upsert_merge_newer_old_timestamp_ignored(self, postgres_connection, clean_db):
+        """Test merge_newer strategy ignores updates with older timestamp."""
+        import datetime
+        
+        # Insert initial data with recent timestamp
+        new_time = datetime.datetime.now(datetime.timezone.utc)
+        cursor = postgres_connection.cursor()
+        cursor.execute("""
+            INSERT INTO inventory (sku, quantity, reserved, updated_at)
+            VALUES ('OLDER-SKU', 100, 10, %s)
+        """, (new_time,))
+        postgres_connection.commit()
+        cursor.close()
+        
+        # Upsert with merge_newer using OLD timestamp - should NOT update
+        old_time = new_time - datetime.timedelta(days=1)
+        job = Job(
+            steps=[
+                DataclassStep(
+                    id='upsert_older',
+                    type='db.upsert',
+                    connection='pg',
+                    config={
+                        'table': 'inventory',
+                        'key': ['sku'],
+                        'conflict': 'merge_newer',
+                        'mapping': {
+                            'sku': 'OLDER-SKU',
+                            'quantity': 999,  # Should NOT update
+                            'reserved': 99,   # Should NOT update
+                            'updated_at': old_time.isoformat(),
+                        }
+                    }
+                )
+            ],
+            connections={
+                'pg': ConnectionConfig(
+                    name='pg',
+                    type='postgres',
+                    config={
+                        'host': 'localhost',
+                        'port': 5433,
+                        'database': 'portl_test',
+                        'username': 'portl_test',
+                        'password': 'portl_test',
+                    }
+                )
+            },
+            transaction=TransactionConfig(scope='db')
+        )
+        
+        engine = JobEngine(job, dry_run=False)
+        context = engine.execute()
+        
+        result = context.get_step_result('upsert_older')
+        assert result.status == StepStatus.OK
+        
+        # Verify original values preserved (older timestamp loses)
+        cursor = postgres_connection.cursor()
+        cursor.execute("SELECT quantity, reserved FROM inventory WHERE sku = 'OLDER-SKU'")
+        row = cursor.fetchone()
+        assert row[0] == 100  # Original preserved
+        assert row[1] == 10   # Original preserved
+        cursor.close()
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 
