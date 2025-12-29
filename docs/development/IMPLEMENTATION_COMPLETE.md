@@ -1,5 +1,9 @@
 # 🎉 Portl PR#1 + PR#2: Implementation Complete
 
+> **📜 Historical Document**: This file documents the state after PR#1 and PR#2.
+> Additional features (Lambda, MySQL, Google Sheets, Conditional, Field Mapping) were completed in subsequent PRs.
+> For current project status, see [TODO.md](TODO.md).
+
 ## What We Built (Two Major PRs)
 
 ### **PR#1: Core Execution Engine** (Session 1)
